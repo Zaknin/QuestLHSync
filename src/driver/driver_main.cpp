@@ -292,7 +292,7 @@ static std::string GetStr(vr::PropertyContainerHandle_t c, vr::ETrackedDevicePro
 static std::string StreamerName(const std::string &driver) {
   static const char *const names[][2] = {{"oculus_virtualdesktop", "Virtual Desktop"}, {"oculus", "Quest Link"},
                                          {"creolecast", "CreoleCast"}, {"vrlink", "Steam Link"},
-                                         {"alvr_server", "ALVR"}};
+                                         {"alvr_server", "ALVR"}, {"pico", "PICO Connect"}};
   for (auto &n : names)
     if (driver == n[0]) return n[1];
   return driver;
@@ -399,7 +399,9 @@ class Provider : public vr::IServerTrackedDeviceProvider {
         std::string actual = GetStr(c, vr::Prop_ActualTrackingSystemName_String);
         if (!actual.empty()) sys = actual;
         // Virtual Desktop names every headset newer than the Quest Pro "Meta Quest 3", ALVR the one it emulates (a
-        // Quest 2 unless set otherwise): neither name tells, so whichever headset answers is used
+        // Quest 2 unless set otherwise): neither name tells, so whichever headset answers is used.
+        // PICO Connect similarly advertises Pico 4 Pro as generic "PICO 4"; the network
+        // listener separately requires the headset-side identity to be A8110/Pico 4 Pro.
         bool any = any_hmd_ || sys == "oculus_virtualdesktop" || sys == "alvr_server";
         if (family.empty() && !any && StreamerName(sys) == sys) {  // no streamer's driver: a headset on a cable
           SetWired(sys, model);
