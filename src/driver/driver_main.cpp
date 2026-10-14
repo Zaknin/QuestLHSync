@@ -496,7 +496,7 @@ class Provider : public vr::IServerTrackedDeviceProvider {
   bool any_hmd_ = false, recording_ = false, overlay_started_ = false, steady_ = true, rel_done_ = true;
   bool stood_down_ = false;  // the worker's, once wired: hooks out, search and levelling stopped
   int cmd_seen_ = 0;
-  double started_ = 0, last_status_ = 0;
+  double started_ = 0, last_status_ = 0, last_stations_rec_ = -1e18;
   Sync::Spots rec_spots_;  // when the recording started
 
   void ReadSettings() {
@@ -605,6 +605,21 @@ class Provider : public vr::IServerTrackedDeviceProvider {
     }
     g_sync->SetStationsRaw(raw);
     g_sync->SetChannels(chans);
+    // Read-only recording for Pico calibration: positions of each SteamVR
+    // lighthouse base station in the *raw* lighthouse universe. The known
+    // HMD poses are already logged separately by Sync::OnHmdPose.
+    // S records are not consumed by the live solver.
+    double now = QpcNow();
+    if (recording_ && now - last_stations_rec_ >= 1.0) {
+      last_stations_rec_ = now;
+      for (const auto &kv : raw) {
+        V3 p = kv.second.first;
+        Quat q = ToQuat(kv.second.second);
+        int channel = chans.count(kv.first) ? chans.at(kv.first) : 0;
+        g_sync->Rec(now, "S %s %d %.9f %.9f %.9f %.9f %.9f %.9f %.9f",
+                    kv.first.c_str(), channel, p.x, p.y, p.z, q.w, q.x, q.y, q.z);
+      }
+    }
   }
 
   void Commands() {
