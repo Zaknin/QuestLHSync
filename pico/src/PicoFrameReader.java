@@ -1,6 +1,7 @@
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.SharedMemory;
+import android.os.SystemClock;
 import android.system.OsConstants;
 
 import java.io.BufferedOutputStream;
@@ -151,7 +152,64 @@ public final class PicoFrameReader {
         if (failed) System.exit(3);
     }
 
+    /**
+     * Read-only single-camera diagnostic for the two Android clock domains.
+     * BOOTTIME includes suspend, MONOTONIC does not. Vendor slot+122 is still
+     * only a candidate timestamp; this probe does not reinterpret F records.
+     * Emit diagnostics to stderr, never mixing them with the binary stream.
+     */
+    private static void probeClock() throws Exception {
+        IBinder svc = getService();
+        if (svc == null || !"pvr.ITrackingService".equals(svc.getInterfaceDescriptor()))
+            throw new IllegalStateException("pvr.ITrackingService unavailable");
+        try (Camera cam = new Camera(svc, "pvr.ITrackingService", CAMERAS[0], SENSORS[0])) {
+            for (int sample = 0; sample < 12; sample++) {
+                long max = 0, chosen = 0, vendor = 0;
+                int beforeIndex = cam.view.getInt(12);
+                for (int slot = 0; slot < SLOTS; slot++) {
+                    long seq = cam.view.getLong(HEADER + slot * STRIDE + 146);
+                    if (seq > max && (seq & 1L) != 0) max = seq;
+                }
+                for (int slot = 0; slot < SLOTS; slot++) {
+                    int base = HEADER + slot * STRIDE;
+                    long seq = cam.view.getLong(base + 146);
+                    long timestamp = cam.view.getLong(base + 122);
+                    if (seq > chosen && seq < max && (seq & 1L) != 0 && timestamp > 0) {
+                        chosen = seq;
+                        vendor = timestamp;
+                    }
+                }
+                long monoBefore = System.nanoTime();
+                long boot = SystemClock.elapsedRealtimeNanos();
+                long monoAfter = System.nanoTime();
+                long mono = monoBefore + (monoAfter - monoBefore) / 2;
+                if (beforeIndex != cam.view.getInt(12) || chosen == 0) {
+                    System.err.println("Pico clock sample=" + sample + " unstable/empty slot; skipped");
+                } else {
+                    System.err.println("Pico clock sample=" + sample + " C" + cam.id +
+                        " seq=" + chosen +
+                        " vendor_ns=" + vendor +
+                        " boottime_ns=" + boot +
+                        " monotonic_ns=" + mono +
+                        " boot_minus_mono_ns=" + (boot - mono) +
+                        " boot_minus_vendor_ns=" + (boot - vendor));
+                }
+                Thread.sleep(250);
+            }
+        }
+    }
+
     public static void main(String[] args) {
+        if (args.length == 1 && "--clock".equals(args[0])) {
+            try {
+                probeClock();
+            } catch (Throwable e) {
+                System.err.println("Pico clock probe FAILED: " + e);
+                e.printStackTrace(System.err);
+                System.exit(3);
+            }
+            return;
+        }
         if (args.length == 1 && "--probe".equals(args[0])) {
             try {
                 probe();
