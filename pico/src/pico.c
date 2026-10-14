@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include "headset.h"
 
 const char *const hs_capture_name = "pico_lhsight";
@@ -27,12 +29,46 @@ void hs_device_info(char *serial, char *model, char *fw, size_t n) {
     __system_property_get("ro.build.version.incremental", fw);
     if (!model[0]) strcpy(model, "PICO 4 Pro");
 }
-// P2: translate the headset's factory sensor.yaml omni/radtan calibration to the
-// model understood by src/driver/sync.cpp. Never invent camera extrinsics.
+// Explicit local-only provisioning bridge for private factory calibration.
+// Disabled by default; never ships or fabricates device-specific coefficients.
+// Windows Optics::LoadPico independently rejects unverified mapping/pose.
 int hs_calibration(char **data, size_t *len, char *name, size_t n) {
-    *data = NULL; *len = 0;
-    snprintf(name, n, "Pico factory omni/radtan calibration adapter not implemented (P2)");
-    return -1;
+    *data = NULL;
+    *len = 0;
+    const char *path = getenv("PICO_CALIB_PATH");
+    if (!path || path[0] != '/') {
+        snprintf(name, n, "Pico calibration not provisioned (P2: no corrections)");
+        return -1;
+    }
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) {
+        snprintf(name, n, "Pico calibration file unavailable (errno %d)", errno);
+        return -1;
+    }
+    struct stat st;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 2 || st.st_size > 131072) {
+        close(fd);
+        snprintf(name, n, "Pico calibration file is not a regular JSON file (max 128 KiB)");
+        return -1;
+    }
+    size_t need = (size_t)st.st_size, got = 0;
+    char *buf = malloc(need);
+    if (!buf) {
+        close(fd);
+        snprintf(name, n, "Pico calibration allocation failed");
+        return -1;
+    }
+    while (got < need) {
+        ssize_t r = read(fd, buf + got, need - got);
+        if (r < 0 && errno == EINTR) continue;
+        if (r <= 0) { free(buf); close(fd); snprintf(name, n, "Pico calibration read failed"); return -1; }
+        got += (size_t)r;
+    }
+    close(fd);
+    *data = buf;
+    *len = need;
+    snprintf(name, n, "pico/device-calibration");
+    return 0;
 }
 pid_t hs_capture_start(int out_fd, char *msg, size_t n) {
     char program[512], jar[512];
