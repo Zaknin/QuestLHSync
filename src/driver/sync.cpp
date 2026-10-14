@@ -228,6 +228,90 @@ bool Optics::LoadFrame(const JVal &root, std::string *err) {
   return true;
 }
 
+// Pico sensor.yaml T_BS is body <- camera. Do not assume that body is SteamVR's
+// HMD pose frame: a verified HeadFromBody transform is mandatory.
+// A calibration proposal produced from raw factory YAML MUST be rejected by default.
+static bool PicoRigid(const std::vector<double> &a) {
+  if (a.size() != 16) return false;
+  for (double v : a) if (!std::isfinite(v)) return false;
+  if (std::fabs(a[12])+std::fabs(a[13])+std::fabs(a[14])+std::fabs(a[15]-1) > 1e-6) return false;
+  V3 x{a[0],a[4],a[8]}, y{a[1],a[5],a[9]}, z{a[2],a[6],a[10]};
+  if (std::fabs(norm(x)-1) > 0.005 || std::fabs(norm(y)-1) > 0.005 ||
+      std::fabs(norm(z)-1) > 0.005 || std::fabs(dot(x,y)) > 0.005 ||
+      std::fabs(dot(y,z)) > 0.005 || std::fabs(dot(z,x)) > 0.005 ||
+      norm(cross(x,y)-z) > 0.01) return false;
+  return true;
+}
+
+bool Optics::LoadPico(const JVal &root, std::string *err) {
+  const JVal *mapping = root.get("mapping_verified");
+  const JVal *pose = root.get("pose_verified");
+  const JVal *htb = root.get("HeadFromBody");
+  if (!mapping || mapping->t != JVal::Bool || !mapping->b ||
+      !pose || pose->t != JVal::Bool || !pose->b) {
+    if (err) *err = "Pico camera mapping and SteamVR HeadFromBody have not been validated";
+    return false;
+  }
+  std::vector<double> B = htb ? htb->nums() : std::vector<double>();
+  if (!PicoRigid(B)) {
+    if (err) *err = "Pico HeadFromBody missing/invalid (4x4 rigid, row-major)";
+    return false;
+  }
+  M3 Rhb;
+  for (int r = 0; r < 3; ++r)
+    for (int j = 0; j < 3; ++j) Rhb.m[r][j] = B[r*4+j];
+  V3 thb{B[3], B[7], B[11]};
+  const JVal *cams = root.get("cameras");
+  if (!cams || cams->t != JVal::Arr || cams->a.size() != 4) {
+    if (err) *err = "Pico requires all four K0 tracking cameras";
+    return false;
+  }
+  CamCal out[kMaxCam];
+  int n = 0;
+  for (const JVal &c : cams->a) {
+    const JVal *id = c.get("id"), *size = c.get("size"), *Tbs = c.get("T_BS");
+    const JVal *intr = c.get("intrinsics"), *dist = c.get("distortion");
+    if (!id || id->t != JVal::Num || !size || !Tbs || !intr || !dist) {
+      if (err) *err = "Pico camera missing id/size/T_BS/intrinsics/distortion";
+      return false;
+    }
+    int i = (int)id->num(-1);
+    auto sz = size->nums(), M = Tbs->nums(), p = intr->nums(), q = dist->nums();
+    if (!(i == 0 || i == 3 || i == 4 || i == 5) || out[i].valid ||
+        sz.size() != 2 || sz[0] != 640 || sz[1] != 480 ||
+        !PicoRigid(M) || p.size() != 5 || q.size() != 4) {
+      if (err) *err = "Pico camera ID, size, T_BS or coefficients invalid";
+      return false;
+    }
+    CamCal &k = out[i];
+    k.w = 640; k.h = 480; k.pico_omni = true;
+    k.xi = p[0]; k.f = p[1]; k.fy = p[2]; k.cx = p[3]; k.cy = p[4];
+    k.k[0] = q[0]; k.k[1] = q[1]; k.p[0] = q[2]; k.p[1] = q[3];
+    pico_optics::Intrinsics pc{k.xi,k.f,k.fy,k.cx,k.cy,k.k[0],k.k[1],k.p[0],k.p[1]};
+    if (!pico_optics::Valid(pc)) {
+      if (err) *err = "Pico camera intrinsics invalid";
+      return false;
+    }
+    M3 Rbs;
+    for (int r = 0; r < 3; ++r)
+      for (int j = 0; j < 3; ++j) Rbs.m[r][j] = M[r*4+j];
+    k.R = Rhb * Rbs;
+    k.t = Rhb * V3{M[3],M[7],M[11]} + thb;
+    k.valid = true;
+    n++;
+  }
+  if (n != 4) {
+    if (err) *err = "Pico camera mapping incomplete";
+    return false;
+  }
+  for (int i = 0; i < kMaxCam; ++i) cams_[i] = out[i];
+  const JVal *dev = root.get("device");
+  device_ = dev && dev->t == JVal::Str ? dev->s : "PICO 4 Pro";
+  exact_time_ = false;  // copied K0 buffer time, not validated exposure time
+  pico_ = true;
+  return true;
+}
+
 std::string Optics::Unused() const {
   std::string s;
   for (int i = 0; i < kMaxCam; i++)
