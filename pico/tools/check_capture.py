@@ -30,7 +30,7 @@ def main():
                 continue
             kind = parts[1]
             try:
-                if kind == "U" and len(parts) >= 9 and parts[2] == "F":
+                if kind == "U" and len(parts) >= 8 and parts[2] == "F":
                     cam = int(parts[3])
                     blob_count = int(parts[7])
                     if blob_count < 0:
