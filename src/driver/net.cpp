@@ -352,7 +352,14 @@ bool HeadsetLink::Session(const Found &f) {
       switch (line[0]) {
         case 'F':
           last_frame_ = rx;
-          if (have_calib) sync_->OnLine(rx, line.c_str());
+          if (have_calib) {
+            sync_->OnLine(rx, line.c_str());
+          } else if (sync_->recording()) {
+            // Pico P1: preserve raw sightings for *offline* optics validation.
+            // "U F ..." is deliberately distinct from solver-ready "F ...".
+            // No calibration bypass; never feed unknown rays to the solver.
+            rec_(rx, "U " + line);
+          }
           break;
         case 'Q': {
           unsigned sq;
