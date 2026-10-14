@@ -122,3 +122,12 @@ The Pico headset-side `hs_calibration` also has a deliberately opt-in, read-only
 **Do not enable `PICO_CALIB_PATH` with the private DRAFT during normal sessions**: the Windows loader will reject it because `mapping_verified` and `pose_verified` are false, and the user's local calibration would be transmitted in plaintext to any TCP client that connects. First establish the exact `HeadFromBody` transform for the actual streamer and verify Binder camera ordering, then validate the solver in read-only recording mode before applying corrections.
 
 **Acceptance still outstanding:** actual Windows SteamVR HMD enumeration with PICO Connect, calibration handshake, valid pixel rays against real base-station positions, a stable frame-to-pose mapping and controlled non-applying solver run.
+
+### Read-only Windows HMD identity checkpoint
+
+For PICO Connect -> SteamVR, validate the actual HMD model and tracking-system names before touching the solver or enabling correction. With SteamVR running on the PC, execute:
+
+    python -m pip install openvr
+    python pico/tools/steamvr_hmd_info.py
+
+The helper queries OpenVR properties only. It prints HMD model, tracking-system name, actual tracking system if exposed, render model and manufacturer; it deliberately omits the headset serial number. No driver installation or active tracking modification is needed. This is the first useful end-to-end compatibility check, not an ongoing timestamp investigation.
