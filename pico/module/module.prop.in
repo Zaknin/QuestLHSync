@@ -1,0 +1,6 @@
+id=questlhsync_pico
+name=QuestLHSync - Pico 4 Pro (experimental P1)
+version=@VERSION@
+versionCode=1
+author=CreoleVR (QuestLHSync), Zaknin (Pico port)
+description=Experimental Pico 4 Pro read-only K0 bright-spot streamer. Reuses QuestLHSync network daemon and detector. Camera calibration and live tracking corrections are not implemented yet.
