@@ -101,3 +101,14 @@ Use the separate **read-only** Java clock probe to test the hypothesis; do not c
     CLASSPATH=/data/local/tmp/qlhs-pico-p1/PicoFrameReader.jar /system/bin/app_process /system/bin PicoFrameReader --clock
 
 The `--clock` command samples the last completed slot of K0 C0 12 times and compares the candidate vendor value against `SystemClock.elapsedRealtimeNanos()` (BOOTTIME) and `System.nanoTime()` (MONOTONIC). The main binary-stream mode is untouched. In particular **F is still copy-time, not vendor-time** until clock domain, frame age and exposure semantics are validated.
+
+### P2 clock-domain result (BOOTTIME hypothesis revised)
+
+On a real Pico 4 Pro, a read-only `PicoFrameReader --clock` run with 12 samples (250 ms apart) confirmed:
+
+- `SystemClock.elapsedRealtimeNanos()` minus `System.nanoTime()` = **+138.14995 seconds**, nearly constant during the 3-second probe.
+- The candidate ring timestamp (`slot+122`) was **4.659–4.692 seconds *ahead* of BOOTTIME** in those samples; it was about **142.833 seconds ahead of MONOTONIC** at the first sample.
+- The apparent 4.66–4.69 s interval is a **clock-domain offset**, not evidence of multi-second camera latency. The probe samples a previous completed slot at 250 ms intervals, introducing up to a frame-period phase/age variation.
+- Successive ring timestamps on the four cameras differed by ~39,999,885–39,999,886 in raw units per 40 ms K0 frame. This is strong evidence that `slot+122` increments in nanoseconds, but it does **not** establish an absolute epoch or exposure phase.
+- Therefore **the candidate timestamp is not directly CLOCK_BOOTTIME nor CLOCK_MONOTONIC**. Do not apply a fixed 4.7-second correction without verifying that it remains stable across longer sessions and suspend/wake.
+- Existing P1 networking and `F` time-of-copy remain unchanged. Next: compare `--clock` observations tens of seconds apart, prove stable offset/drift, then measure timestamp relative to newest completed frames at higher sampling rate and independently validate camera frame exposure phase.
