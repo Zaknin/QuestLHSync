@@ -421,7 +421,7 @@ class Provider : public vr::IServerTrackedDeviceProvider {
         std::lock_guard<std::mutex> g(hmd_m_);
         hmd_model_ = model.empty() ? "headset" : model;
         hmd_system_ = StreamerName(sys);
-        Log(Fmt("HMD %u: %s via %s isn't a Quest Pro, 3, 3S or Steam Frame: idle", i, hmd_model_.c_str(),
+        Log(Fmt("HMD %u: %s via %s isn't a recognized compatible HMD: idle", i, hmd_model_.c_str(),
                 hmd_system_.c_str()));
       }
       g_kind[i] = kOther;
