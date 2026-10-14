@@ -113,6 +113,7 @@ enum Kind { kUnknown = 0, kLighthouse = 1, kOther = 2, kHmd = 3 };
 static std::atomic<int> g_kind[vr::k_unMaxTrackedDeviceCount];
 static std::atomic<int> g_hmd{-1};             // the eligible HMD's index
 static std::atomic<bool> g_off{false};         // a wired headset: poses pass untouched
+static std::atomic<bool> g_pico_observe{false};  // uncalibrated Pico: collect only; NEVER move/hide devices
 static std::atomic<bool> g_hide{false};        // the headset is about to place the lighthouse devices
 static std::atomic<double> g_unplaced{0};      // when a controller or tracker first came while not placed (0: none)
 constexpr double kHideFor = 20;                // s from then, at most
@@ -193,6 +194,9 @@ static bool Apply(uint32_t id, vr::DriverPose_t &p) {
       if (g_gravity) g_gravity->OnPose((int)id, t, V3{pos[0], pos[1], pos[2]}, Quat{q.w, q.x, q.y, q.z});
     }
   }
+  // Pico support is still uncalibrated. Keep reading device and HMD poses for
+  // diagnostics, but no tracker/station may be hidden or transformed.
+  if (g_pico_observe.load(std::memory_order_relaxed)) return false;
   Xf x;
   if (!ReadXf(x)) {
     // not placed yet while the headset's cameras are about to: hidden, rather than shown metres away in SteamVR's own
@@ -409,6 +413,16 @@ class Provider : public vr::IServerTrackedDeviceProvider {
           continue;
         }
         if (!family.empty() || any) {
+          if (family == "Pico" || family == "Pico 4 Pro") {
+            // PICO Connect reports Pro hardware as generic PICO 4. Before
+            // camera mapping + HeadFromBody are validated, never correct
+            // lighthouse objects, never hide them, and disable other hooks.
+            g_pico_observe.store(true, std::memory_order_release);
+            g_hide.store(false, std::memory_order_relaxed);
+            g_gravity->SetEnabled(false);
+            g_rel->SetEnabled(false);
+            Log("PICO Connect: OBSERVE ONLY (no lighthouse pose modifications)");
+          }
           g_hmd = (int)i;
           g_kind[i] = kHmd;
           link_->SetFamily(any ? "" : family);
@@ -702,7 +716,7 @@ class Provider : public vr::IServerTrackedDeviceProvider {
       Commands();
       Transform xf = g_sync->Tick(now);
       WriteXf(xf);
-      g_hide.store(!xf.active && link_->state() == HeadsetLink::kConnected);
+      g_hide.store(!g_pico_observe.load(std::memory_order_relaxed) && !xf.active && link_->state() == HeadsetLink::kConnected);
       if (xf.active) g_unplaced.store(0);
       if (now - last_gravity_ >= 1) {
         last_gravity_ = now;
