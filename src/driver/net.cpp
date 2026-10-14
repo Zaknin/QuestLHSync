@@ -62,12 +62,19 @@ std::string QuestFamily(const std::string &text) {
   // Pico 4 Pro / PicoOS Phoenix_ovs, including ro.product.model=A8110.
   // Keep the family exact: other Pico models have different optics/calibration.
   if (has("pico4pro") || has("picoa8110") || s == "a8110" || has("phoenixovs")) return "Pico 4 Pro";
+  // PICO Connect reports a Pico 4 Pro as the generic PICO 4 model in SteamVR.
+  // This is intentionally NOT treated as proof of Pro hardware.
+  if (has("pico4") || has("piconeo3")) return "Pico";
   return "";
 }
 
 // a headset of this model can be SteamVR's HMD (family "" or an unnamed model: can't tell, so yes)
 static bool Fits(const std::string &family, const std::string &model) {
   std::string f = QuestFamily(model);
+  // The SteamVR PICO 4 identity is generic; this backend is verified only
+  // against the A8110/Pico 4 Pro. Require that specific identity on the wire.
+  if (family == "Pico") return f == "Pico 4 Pro";
+  if (family == "Pico 4 Pro") return f == "Pico 4 Pro";
   return family.empty() || f.empty() || f == family;
 }
 
