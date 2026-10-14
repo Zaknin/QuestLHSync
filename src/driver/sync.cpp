@@ -12,6 +12,7 @@
 #include <unordered_map>
 
 #include "json.h"
+#include "../../pico/src/omni_radtan.h"
 
 static const double kInf = std::numeric_limits<double>::infinity();
 
@@ -80,6 +81,13 @@ void CamCal::Dist(double a, double b, double &u, double &v) const {
 
 // Newton on the forward model
 bool CamCal::Unproject(double px, double py, V3 &d) const {
+  if (pico_omni) {
+    pico_optics::Intrinsics c{xi, f, fy, cx, cy, k[0], k[1], p[0], p[1]};
+    pico_optics::Vec3 ray;
+    if (!pico_optics::Unproject(c, px, py, ray)) return false;
+    d = {ray.x, ray.y, ray.z};
+    return true;
+  }
   double tu = (px - cx) / f, tv = (py - cy) / fy;
   double rd = std::hypot(tu, tv), th = std::min(std::max(rd, 0.0), 1.5);
   double s = rd > 1e-12 ? std::tan(th) / rd : 1.0, a = tu * s, b = tv * s;
@@ -106,6 +114,7 @@ bool Optics::Load(const std::string &json, std::string *err) {
   if (!JParse(json, root)) { if (err) *err = "calibration isn't JSON"; return false; }
   const JVal *kind = root.get("kind");
   if (kind && kind->t == JVal::Str && kind->s == "steam_frame") return LoadFrame(root, err);
+  if (kind && kind->t == JVal::Str && kind->s == "pico") return LoadPico(root, err);
   const JVal *cams = root.get("CameraCalibration");
   if (!cams || cams->t != JVal::Arr) { if (err) *err = "no CameraCalibration"; return false; }
   CamCal out[kMaxCam];
@@ -140,6 +149,7 @@ bool Optics::Load(const std::string &json, std::string *err) {
   const JVal *dev = root.get("Device"), *type = dev ? dev->get("DeviceType") : nullptr;
   device_ = type && type->t == JVal::Str ? type->s : "";
   exact_time_ = false;
+  pico_ = false;
   return true;
 }
 
@@ -214,6 +224,7 @@ bool Optics::LoadFrame(const JVal &root, std::string *err) {
   const JVal *model = dc->get("model_number");
   device_ = model && model->t == JVal::Str ? model->s : "Steam Frame";
   exact_time_ = true;
+  pico_ = false;
   return true;
 }
 
@@ -246,8 +257,15 @@ bool Optics::Pose(int cam, M3 &R, V3 &t) const {
 }
 
 bool Optics::InImage(int cam, V3 dc, double margin) const {
-  if (cam < 0 || cam >= kMaxCam || !cams_[cam].valid || !(dc.z > 0.05)) return false;
+  if (cam < 0 || cam >= kMaxCam || !cams_[cam].valid) return false;
   const CamCal &c = cams_[cam];
+  if (c.pico_omni) {
+    pico_optics::Intrinsics pc{c.xi,c.f,c.fy,c.cx,c.cy,c.k[0],c.k[1],c.p[0],c.p[1]};
+    double px = 0, py = 0;
+    if (!pico_optics::Project(pc, {dc.x,dc.y,dc.z}, px, py)) return false;
+    return px >= margin && py >= margin && px <= c.w-margin && py <= c.h-margin;
+  }
+  if (!(dc.z > 0.05)) return false;
   double u, v;
   c.Dist(dc.x / dc.z, dc.y / dc.z, u, v);
   double x = c.cx + c.f * u / c.ir, y = c.cy + c.fy * v / c.ir;
@@ -2715,7 +2733,7 @@ bool Sync::SetCalibration(const std::string &json, std::string *err) {
   std::string left_out = optics_.Unused();
   if (!left_out.empty()) log_("cameras " + left_out + " left out: they look down, the base stations hang above");
   // a Quest's frame period is one of two, the Frame's is learned from its frames
-  grid_quest_ = !optics_.exact_time() && !cfg_.learn_grid;
+  grid_quest_ = !optics_.exact_time() && !optics_.pico() && !cfg_.learn_grid;
   grid_ = FrameGrid(grid_quest_);
   grid_logged_.clear();
   return true;
