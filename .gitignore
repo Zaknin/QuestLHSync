@@ -5,3 +5,8 @@ magisk/build/
 magisk/frida/
 frame/build/
 __pycache__/
+
+# Private, device-specific Pico factory calibration (never commit actual headset coefficients)
+/pico-calibration*.tar
+/pico-calibration*.zip
+/pico-calibration*.json
