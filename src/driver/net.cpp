@@ -59,6 +59,9 @@ std::string QuestFamily(const std::string &text) {
   if (has("questpro") || has("seacliff")) return "Quest Pro";
   if (has("quest3") || has("eureka") || has("panther")) return "Quest 3";
   if (has("steamframe") || has("deckard")) return "Steam Frame";
+  // Pico 4 Pro / PicoOS Phoenix_ovs, including ro.product.model=A8110.
+  // Keep the family exact: other Pico models have different optics/calibration.
+  if (has("pico4pro") || has("picoa8110") || s == "a8110" || has("phoenixovs")) return "Pico 4 Pro";
   return "";
 }
 
