@@ -62,18 +62,19 @@ def main():
         if key in intervals:
             st, en = intervals[key]
             print(f"  {key} covered {(en-st)/1e9:.1f} sec")
+    motion = max((b[1] - b[0] for b in bounds), default=0.0) if counts["HMD poses"] else 0.0
     if counts["HMD poses"]:
         print("  HMD position spread:", ", ".join(f"{b[1]-b[0]:.2f} m" for b in bounds))
     if malformed:
         print("  Malformed relevant lines:", malformed)
     ok = all(counts[f"C{x}"] >= 200 for x in (0, 3, 4, 5))
-    ok &= counts["HMD poses"] >= 200 and len(station_samples) >= 2
+    ok &= counts["HMD poses"] >= 200 and motion >= 0.30 and len(station_samples) >= 2
     ok &= all(station_samples[x] >= 10 for x in station_samples)
     if ok:
         print("CAPTURE HAS RAW CAMERA SIGHTINGS + HMD POSES + STATION POSES")
         print("Not proof of correct camera mapping or tracking alignment.")
     else:
-        print("INCOMPLETE CAPTURE: need 4 cameras, moving HMD and >=2 visible stations")
+        print("INCOMPLETE CAPTURE: need 4 cameras, HMD motion >= 0.30m and >=2 visible stations")
     return 0 if ok else 1
 
 
