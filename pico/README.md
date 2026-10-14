@@ -149,3 +149,14 @@ Driver `QuestFamily()` now treats the generic OpenVR `PICO 4` as `Pico` family, 
 To build a locally modified Windows driver, **close SteamVR** (and the running dashboard), install VS 2022 C++ Build Tools if necessary, then run `cmd /c build.bat`. Register **this local build** with `python install.py`, not the official auto-updater installer (which downloads upstream without Pico support). Restart SteamVR with the Pico streaming. Check `%LOCALAPPDATA%/QuestLHSync/questlhsync.log` for `OBSERVE ONLY`, `PICO Connect`, and a connection to the `A8110` headset.
 
 **Expected first integration state:** headset and streaming-HMD recognition succeed; camera frames remain unconsumed by the PC solver until we supply and validate real calibration. Do not interpret zero solver sightings as broken cameras; the separate `pico/test_stream.py` already validated their read-only Wi-Fi F records. Do not install the experimental Pico Magisk ZIP yet.
+
+### Offline recording for camera mapping (OBSERVE ONLY)
+
+**Goal:** collect evidence to determine real camera-to-factory mapping and HeadFromBody for PICO Connect without feeding unverified calibration to live solver and without modifying tracker poses.
+
+- A driver with uncalibrated Pico camera data normally ignores `F`. While **Record session** is active, it now stores those in the existing session recording as `U F ...`, not `F ...` (so old solver ingest still does not treat them as calibrated). `Sync::OnHmdPose` separately records the usual `P 0 ...` poses.
+- Once a second, the driver now writes `S <station-serial> <channel> <x> <y> <z> <qw> <qx> <qy> <qz>` for valid SteamVR lighthouse station poses in the raw lighthouse frame. These are record-only, not used to realign.
+- To acquire: close SteamVR, `git pull --ff-only`, `cmd /c build.bat`, then start PICO Connect and SteamVR. The local build stays registered after `python install.py`. Check the log for `PICO Connect: OBSERVE ONLY` and `A8110 ... connected`. Switch on Lighthouse tracked devices so station poses are available.
+- In the QuestLHSync dashboard click **Record session**, slowly face each of the base stations from several positions in the play space while changing HMD orientation and translation for 60-90 seconds (avoid moving the mounted base stations), then click **Record session** again to flush and close.
+- The file is under `%LOCALAPPDATA%\\QuestLHSync\\recordings\\qlhs-*.txt`; run `python pico/tools/check_capture.py <path>` to verify it contains `U F`, `P 0`, and `S` observations. It is device-specific and not published in the GitHub repo.
+- This is a **data-capture milestone, not a solved calibration**. A camera-station correspondence, rigorous solve and reprojection validation are still required. `mapping_verified` and `pose_verified` must remain false until that is done.
