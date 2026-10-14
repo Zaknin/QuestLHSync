@@ -120,6 +120,8 @@ struct CamCal {
   M3 R;  // device <- camera
   V3 t;
   double f = 0, fy = 0, cx = 0, cy = 0, k[6] = {}, p[2] = {};
+  bool pico_omni = false;
+  double xi = 0;  // Pico tracking cameras: Mei/Omni + Radtan, not Quest Fisheye62
   void Dist(double a, double b, double &u, double &v) const;
   bool Unproject(double px, double py, V3 &d) const;  // unit ray, camera frame
 };
@@ -136,12 +138,15 @@ class Optics {
   std::string Unused() const;  // "0, 1": the calibrated cameras left out, "" for none
   const std::string &device() const { return device_; }       // "Seacliff" (Quest Pro), "Eureka" (Quest 3), ...
   bool exact_time() const { return exact_time_; }  // frame times are the frames' own, no poll lag to take off
+  bool pico() const { return pico_; }  // Pico K0 at 25 Hz must learn its frame grid, not use Quest's 37.5/45 Hz
 
  private:
   CamCal cams_[kMaxCam];
   std::string device_;
   bool exact_time_ = false;
+  bool pico_ = false;
   bool LoadFrame(const JVal &root, std::string *err);
+  bool LoadPico(const JVal &root, std::string *err);
 };
 
 // ---------------------------------------------------------------- timing helpers
