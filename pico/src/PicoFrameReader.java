@@ -37,7 +37,12 @@ public final class PicoFrameReader {
                 req.writeInt(0); // ONLY K0, short exposure; never request IDs >= 7.
                 if (!service.transact(TRANSACTION, req, reply, 0))
                     throw new IllegalStateException("C" + id + ": Binder transact failed");
-                reply.readException();
+                try {
+                    reply.readException();
+                } catch (RuntimeException e) {
+                    throw new IllegalStateException("C" + id +
+                        " K0 GetCameraShareMemory transaction 19 rejected: " + e, e);
+                }
                 int status = reply.readInt();
                 if (status != 0 || reply.readInt() != 1)
                     throw new IllegalStateException("C" + id + ": no K0 ring, status " + status);
@@ -128,7 +133,35 @@ public final class PicoFrameReader {
         return (IBinder) m.invoke(null, "pvrtracking");
     }
 
+    /** Single-shot Binder health check, no frame capture and no binary stdout. */
+    private static void probe() throws Exception {
+        IBinder svc = getService();
+        if (svc == null || !"pvr.ITrackingService".equals(svc.getInterfaceDescriptor()))
+            throw new IllegalStateException("pvr.ITrackingService unavailable");
+        boolean failed = false;
+        for (int i = 0; i < CAMERAS.length; i++) {
+            int id = CAMERAS[i];
+            try (Camera camera = new Camera(svc, "pvr.ITrackingService", id, SENSORS[i])) {
+                System.err.println("Pico K0 C" + id + ": OK (ring mapped and metadata verified)");
+            } catch (Throwable e) {
+                failed = true;
+                System.err.println("Pico K0 C" + id + ": FAILED: " + e);
+            }
+        }
+        if (failed) System.exit(3);
+    }
+
     public static void main(String[] args) {
+        if (args.length == 1 && "--probe".equals(args[0])) {
+            try {
+                probe();
+            } catch (Throwable e) {
+                System.err.println("Pico Binder probe FAILED: " + e);
+                e.printStackTrace(System.err);
+                System.exit(3);
+            }
+            return;
+        }
         Camera[] cameras = new Camera[4];
         try {
             IBinder svc = getService();
