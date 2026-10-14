@@ -32,6 +32,25 @@ int qlhs_cm_clock_gettime(int clk, struct ts *out) {
 #define HEADER_BYTES 40
 static volatile sig_atomic_t stopping;
 static pid_t java_pid;
+// Optional, read-only diagnostics. Vendor timestamp unit and epoch are unknown.
+static struct { uint64_t last_v, last_c, at; double dv, dc; int n; } clock_diag[16];
+static void report_time(uint32_t cam, uint64_t v, uint64_t c) {
+    unsigned i = cam; 
+    if (clock_diag[i].last_v && v > clock_diag[i].last_v && c > clock_diag[i].last_c) {
+        clock_diag[i].dv += (double)(v - clock_diag[i].last_v);
+        clock_diag[i].dc += (double)(c - clock_diag[i].last_c);
+        clock_diag[i].n++;
+    }
+    clock_diag[i].last_v = v; clock_diag[i].last_c = c;
+    if (!clock_diag[i].at) clock_diag[i].at = c;
+    if (c - clock_diag[i].at < 5000000000ull) return;
+    printf("I pico_ts cam=%u vendor_raw=%llu copied_ns=%llu mean_vendor_delta_raw=%.0f mean_copy_delta_ns=%.0f pairs=%d\n",
+           cam, (unsigned long long)v, (unsigned long long)c,
+           clock_diag[i].n ? clock_diag[i].dv / clock_diag[i].n : 0.0,
+           clock_diag[i].n ? clock_diag[i].dc / clock_diag[i].n : 0.0, clock_diag[i].n);
+    fflush(stdout);
+    clock_diag[i].dv = clock_diag[i].dc = 0; clock_diag[i].n = 0; clock_diag[i].at = c;
+}
 static void terminated(int sig) { (void)sig; stopping = 1; if (java_pid > 0) kill(java_pid, SIGTERM); }
 
 static uint32_t be32(const unsigned char *p) {
@@ -85,6 +104,8 @@ int main(int argc, char **argv) {
     set_bufs(pixels, cells, labels, output_ring, 16); // K0 dark-room threshold (experimental)
     uint64_t frames = 0, scans = 0, scan_time_ns = 0;
     uint64_t last_heartbeat_ns = 0;
+    const char *diag_opt = getenv("PICO_TIMESTAMP_DIAG");
+    const int time_diag = diag_opt && strcmp(diag_opt, "1") == 0;
     unsigned char head[HEADER_BYTES];
     int result = 0;
     while (!stopping) {
@@ -95,7 +116,7 @@ int main(int argc, char **argv) {
         uint64_t vendor_ts = be64(head + 16);
         uint64_t copied_ns = be64(head + 24);
         uint32_t exposure = be32(head + 32), length = be32(head + 36);
-        (void)vendor_ts; // candidate clock domain still unverified
+        // Timestamp is only observed unless explicitly validated.
         if (magic != 0x50465231 || !valid_camera(cam) || length != BYTES ||
             exposure != 4 || (seq & 1u) == 0 || copied_ns == 0) {
             fprintf(stderr, "W Pico invalid frame header: magic=%08x cam=%u seq=%llu len=%u exposure=%u\n",
@@ -104,6 +125,7 @@ int main(int argc, char **argv) {
         }
         rc = get_bytes(fd, pixels, BYTES);
         if (rc <= 0) { if (!stopping) result = 3; break; }
+        if (time_diag) report_time(cam, vendor_ts, copied_ns);
         const int mean = smean(pixels, BYTES); // Quest unit: pixel average multiplied by 10
         u64 sx[MAXB], sy[MAXB];
         u32 np[MAXB];
