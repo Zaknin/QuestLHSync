@@ -19,6 +19,10 @@ public final class PicoFrameReader {
     private static final int WIDTH = 640, HEIGHT = 480, PIXELS = WIDTH * HEIGHT;
     private static final int RING_SIZE = HEADER + STRIDE * SLOTS, PIXEL_OFFSET = 186;
     private static final long MAX_NS_GAP = 2_000_000_000L;
+    // Opt-in text on stderr, NEVER in stdout's PFR1 binary stream.
+    // The default production stream is byte-for-byte unchanged.
+    private static final boolean FRAME_CLOCK_DIAG =
+        "1".equals(System.getenv("PICO_FRAME_CLOCK_DIAG"));
 
     private static final class Camera implements AutoCloseable {
         final int id;
@@ -26,6 +30,7 @@ public final class PicoFrameReader {
         final ByteBuffer view;
         final byte[] pixels = new byte[PIXELS];
         long lastSequence;
+        long diagnosticFrames;
 
         Camera(IBinder service, String descriptor, int id, int sensor) throws Exception {
             this.id = id;
@@ -95,6 +100,7 @@ public final class PicoFrameReader {
                     }
                 if (chosen < 0) break;
                 int base = HEADER + chosen * STRIDE;
+                long writeLockBootNs = FRAME_CLOCK_DIAG ? view.getLong(base + 84) : 0L;
                 int exposure = view.getInt(base + 110);
                 if (exposure != 4)
                     throw new IllegalStateException("C" + id + ": K0 exposure changed to " + exposure);
@@ -102,7 +108,9 @@ public final class PicoFrameReader {
                 frame.position(base + PIXEL_OFFSET);
                 frame.get(pixels, 0, PIXELS);
                 long readNs = System.nanoTime();
+                long readBootNs = FRAME_CLOCK_DIAG ? SystemClock.elapsedRealtimeNanos() : 0L;
                 if (view.getInt(12) != idx || view.getLong(base + 146) != next ||
+                    (FRAME_CLOCK_DIAG && view.getLong(base + 84) != writeLockBootNs) ||
                     view.getLong(base + 122) != ts[chosen] || view.getInt(base + 110) != exposure)
                     break; // discard a potentially torn read; try again next poll
                 // Big-endian records; never print human-readable messages to stdout.
@@ -118,6 +126,17 @@ public final class PicoFrameReader {
                 lastSequence = next;
                 seq[chosen] = -1;
                 copied++;
+                if (FRAME_CLOCK_DIAG && ++diagnosticFrames % 125 == 0) {
+                    // One read per 5 seconds per camera. Same ring slot and
+                    // sequence as the just-emitted PFR1 frame.
+                    System.err.println("PicoFrameClock cam=" + id +
+                        " seq=" + next +
+                        " producer_write_boot_ns=" + writeLockBootNs +
+                        " java_copy_mono_ns=" + readNs +
+                        " java_copy_boot_ns=" + readBootNs +
+                        " producer_to_copy_ms=" +
+                        ((readBootNs - writeLockBootNs) / 1e6));
+                }
             }
             return copied;
         }
