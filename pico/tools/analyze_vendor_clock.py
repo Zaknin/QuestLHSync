@@ -1,6 +1,7 @@
 """Offline PicoFrameReader --clock-scan CSV diagnostic.
 
-Candidate vendor metadata is NOT validated sensor exposure time.
+slot+84 is a firmware-verified BOOTTIME buffer-write-lock stamp, NOT the
+physical exposure time. slot+122/+130 are unverified vendor clocks.
 Standard Python library only. No headset calibration values are required.
 """
 import argparse
@@ -78,6 +79,7 @@ def analyze(path):
             "samples_per_s": round((len(rows) - 1) / span, 2) if span > 0 else None,
             "vendor_frame_delta_ms_median": median(contiguous) if contiguous else None,
             "ts84_frame_delta_ms_median": median([d / 1e6 for d, ds in zip(ts84_diff, seq_diff) if ds == 2]) if contiguous else None,
+            "producer_write_to_probe_ms_median": median((r["boot_ns"] - r["ring_ts84_ns"]) / 1e6 for r in rows),
             "ts84_minus_boot_ms_median": median((r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows),
             "ts84_minus_boot_ms_p10": percentile([(r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows], .1),
             "ts84_minus_boot_ms_p90": percentile([(r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows], .9),
@@ -111,6 +113,8 @@ def main():
             print(f"  C{cam}: {row['samples']} frames / {row['span_s']:.1f}s, "
                   f"rate {row['samples_per_s']:.1f}/s, "
                   f"vendor step {row['vendor_frame_delta_ms_median']} ms")
+            print(f"      producer write-lock -> probe: {row['producer_write_to_probe_ms_median']:.2f}ms "
+                  f"(BOOTTIME-verified, not exposure age)")
             print(f"      slot+84 - BOOTTIME: {row['ts84_minus_boot_ms_median']:+.2f}ms, "
                   f"p10..p90 {row['ts84_minus_boot_ms_p10']:+.2f}.."
                   f"{row['ts84_minus_boot_ms_p90']:+.2f}ms")
@@ -123,7 +127,7 @@ def main():
                   f"vendor/MONO rate diff: {row['vendor_vs_mono_rate_difference_ppm']:+.0f}ppm")
         for error in report["errors"]:
             print("  ISSUE: " + error)
-        print("Exposure not determined: vendor epoch, ring lag, PICO Connect pose timing unverified.")
+        print("Physical exposure remains unknown; slot+84 is producer write-lock time, NOT sensor capture time.")
     return 1 if report["status"] != "DIAGNOSTIC_ONLY" else 0
 
 
