@@ -291,7 +291,7 @@ The camera mapping remains a *candidate* C0->cam0, C3->cam1, C4->cam2, C5->cam3.
 
 New `PicoFrameReader --clock-scan [seconds]` mode reads, **without pixel copies**, the latest finished (not newest/in-flight) slot metadata on all four Binder cameras. It brackets the same instant with Android `System.nanoTime()` (MONOTONIC) and `SystemClock.elapsedRealtimeNanos()` (BOOTTIME); outputs CSV with the raw 64-bit nanoseconds, sensor sequence, newest sequence, ring index and slot index. Samples run ~20 sec by default (5–60 sec allowed). Production `PFR1` binary format, `F`/`T` wire protocol, `lhsyncd`, steamvr driver, private calibration, and `OBSERVE ONLY` are **unchanged**.
 
-Build only in a Windows checkout already configured for Android NDK/JDK/SDK: `python .\pico\build_module.py`. **Do not install** the generated Magisk ZIP. It also produces `pico/build/PicoFrameReader.jar`. To avoid disturbing the live QuestLHSync Java reader, copy this JAR to an entirely separate diagnostic path. With a Pico 4 Pro worn and tracking awake (no active PICO Connect/QuestLHSync camera capture is preferred), PowerShell:
+Build only the independent Java probe in a Windows checkout with JDK and Android SDK (no NDK needed): `python .\pico\build_module.py --reader-only`. **Do not install** any Magisk ZIP. This produces `pico/build/PicoFrameReader.jar`. To avoid disturbing the live QuestLHSync Java reader, copy this JAR to an entirely separate diagnostic path. With a Pico 4 Pro worn and tracking awake (no active PICO Connect/QuestLHSync camera capture is preferred), PowerShell:
 
     $ADB = '192.168.23.12:5555'
     $remote = '/data/local/tmp/PicoFrameReader-clockscan.jar'
