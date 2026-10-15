@@ -18,14 +18,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Room labels were recovered from earlier exploratory notes. ONLY channel 13 is
-# confirmed; the remaining physical placements are provisional, so don't treat
-# an ambiguous room label as proof that a particular physical station was toggled.
+# Room labels verified physically by the user on 2026-10-15, following the
+# marked four-base power-toggle recording. Four positions are confirmed.
 $stations = @(
     [pscustomobject]@{ Channel = 13; Serial = 'LHB-2BB29CAB'; Room = 'FrontLeft-Low / спереди слева, низко'; Confidence = 'CONFIRMED' }
-    [pscustomobject]@{ Channel = 10; Serial = 'LHB-60A737E1'; Room = 'FrontRight-Mid / спереди справа, средняя высота'; Confidence = 'TENTATIVE' }
-    [pscustomobject]@{ Channel = 1;  Serial = 'LHB-6E23CDDC'; Room = 'FarRight-Top / дальняя справа, наверху'; Confidence = 'PROBABLE' }
-    [pscustomobject]@{ Channel = 7;  Serial = 'LHB-22CEE79A'; Room = 'Rear / сзади'; Confidence = 'PROBABLE' }
+    [pscustomobject]@{ Channel = 10; Serial = 'LHB-60A737E1'; Room = 'FrontRight-Mid / спереди справа, средняя высота'; Confidence = 'CONFIRMED' }
+    [pscustomobject]@{ Channel = 1;  Serial = 'LHB-6E23CDDC'; Room = 'FarRight-Top / дальняя справа, наверху'; Confidence = 'CONFIRMED' }
+    [pscustomobject]@{ Channel = 7;  Serial = 'LHB-22CEE79A'; Room = 'Rear / сзади'; Confidence = 'CONFIRMED' }
 )
 
 $dir = Join-Path $env:LOCALAPPDATA 'QuestLHSync\recordings'
