@@ -18,11 +18,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Room labels were recovered from earlier exploratory notes. ONLY channel 13 is
+# confirmed; the remaining physical placements are provisional, so don't treat
+# an ambiguous room label as proof that a particular physical station was toggled.
 $stations = @(
-    [pscustomobject]@{ Channel = 1;  Serial = 'LHB-6E23CDDC' }
-    [pscustomobject]@{ Channel = 7;  Serial = 'LHB-22CEE79A' }
-    [pscustomobject]@{ Channel = 10; Serial = 'LHB-60A737E1' }
-    [pscustomobject]@{ Channel = 13; Serial = 'LHB-2BB29CAB' }
+    [pscustomobject]@{ Channel = 13; Serial = 'LHB-2BB29CAB'; Room = 'FrontLeft-Low / спереди слева, низко'; Confidence = 'CONFIRMED' }
+    [pscustomobject]@{ Channel = 10; Serial = 'LHB-60A737E1'; Room = 'FrontRight-Mid / спереди справа, средняя высота'; Confidence = 'TENTATIVE' }
+    [pscustomobject]@{ Channel = 1;  Serial = 'LHB-6E23CDDC'; Room = 'FarRight-Top / дальняя справа, наверху'; Confidence = 'PROBABLE' }
+    [pscustomobject]@{ Channel = 7;  Serial = 'LHB-22CEE79A'; Room = 'Rear / сзади'; Confidence = 'PROBABLE' }
 )
 
 $dir = Join-Path $env:LOCALAPPDATA 'QuestLHSync\recordings'
@@ -89,18 +92,23 @@ Add-Marker -Action 'ALL_ON_START'
 foreach ($station in $stations) {
     $channel = $station.Channel
     $serial = $station.Serial
+    $room = $station.Room
     Write-Host ''
     Write-Host ("STATION CHANNEL {0}: {1}" -f $channel, $serial) -ForegroundColor Yellow
+    Write-Host ("  PLACE: {0} [{1}]" -f $room, $station.Confidence) -ForegroundColor Yellow
+    if ($station.Confidence -ne 'CONFIRMED') {
+        Write-Warning 'The serial-to-room assignment is not fully verified. Do not guess if unsure which base station this is.'
+    }
     Write-Host ("Face this station and keep the headset tracking. All four are ON: observe for {0} s." -f $BeforeOffSeconds)
     Start-Sleep -Seconds $BeforeOffSeconds
 
-    Write-Host ("Now turn OFF ONLY channel {0} ({1})." -f $channel, $serial) -ForegroundColor Yellow
+    Write-Host ("Now turn OFF ONLY channel {0} ({1}, {2})." -f $channel, $serial, $room) -ForegroundColor Yellow
     [void](Read-Host 'After switching it OFF, immediately press ENTER')
     Add-Marker -Action 'OFF' -Channel $channel -Serial $serial
     Write-Host ("Wait {0} s while this station stays OFF..." -f $OffSeconds)
     Start-Sleep -Seconds $OffSeconds
 
-    Write-Host ("Now turn ON channel {0} ({1}) again." -f $channel, $serial) -ForegroundColor Yellow
+    Write-Host ("Now turn ON channel {0} ({1}, {2}) again." -f $channel, $serial, $room) -ForegroundColor Yellow
     [void](Read-Host 'After switching it ON, immediately press ENTER')
     Add-Marker -Action 'ON' -Channel $channel -Serial $serial
     Write-Host ("Wait {0} s for full spin-up (all four ON)..." -f $AfterOnSeconds)
