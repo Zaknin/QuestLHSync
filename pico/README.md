@@ -326,3 +326,22 @@ Reproduce aggregate stats privately: `python pico/tools/inspect_k0_ring_clocks.p
 **Important correction to the earlier hypothesis:** `slot+84` is **NOT a hardware-exposure timestamp**, and must not be stamped onto a raw optical sighting as capture time. It measures *producer entry to writing the shared-memory record*, which can occur after physical exposure. The `--clock-scan` sample computes `BOOTTIME(now) - slot+84` to quantify an upper portion of the buffering/queueing age at the time of the read-only diagnostic; it does **not** quantify exposure→producer delay. The older `slot+122` and `slot+130` remain unidentified fields inside the camera-specific payload and cannot be treated as current Android time without establishing their vendor epoch.
 
 Production K0 `F` still uses `System.nanoTime()` snapshot/copy time; camera mapping and body/head transform remain unverified, corrections are disabled. Never ship an automatic timestamp rewrite from the 4.736s historical ring offset: the correct conversion of the other clock and the physical exposure event are unknown.
+
+### P2 20-second live K0 clock-scan validation — 2026-10-16
+
+The user successfully ran the **Java-only diagnostic** on the real Pico 4 Pro. This is the direct read-only `PicoFrameReader --clock-scan 20` result (all proprietary/raw CSV remains private). **2,004 valid samples: 501 per camera; all four camera sequence counters advance by exactly 2 for each of 500 steps, with NO dropped sample in the 20-second test; cadence is 25Hz.**
+
+| Camera | Median BOOTTIME(probe) - BOOTTIME(slot+84 write-lock) | Estimated remainder after a 39.999843ms frame | Median slot+122 minus slot+84 |
+| --- | ---: | ---: | ---: |
+| C0 | 45.213ms | 5.213ms | 4736.496ms |
+| C3 | 45.381ms | 5.381ms | 4736.218ms |
+| C4 | 45.836ms | 5.836ms | 4736.636ms |
+| C5 | 45.641ms | 5.641ms | 4736.378ms |
+
+Across **all 2,004 records** selected `newest_seq - seq = 2`, proving this read-only diagnostic intentionally chooses the immediately previous completed K0 frame. For **1,999/2,004** measurements `ring_index` is the next slot after the selected slot (five samples on a ring index boundary); this is consistent with the producer currently writing a newer slot. It explains an *approximate* whole-frame 40ms component of the measured 45ms write-lock→probe age. The extra ~5ms is just the difference between two medians, not a separately observed physical exposure-to-buffer or decoder delay. The first probe sample of each camera shows an expected initial ~77–78ms lag; 99% of other reads are ~40–51ms.
+
+All four `slot+122` vendor clocks advance almost exactly **39.999843ms** per frame and are synchronised between cameras to within ~0.1µs for same-sequence frames. `slot+84` starts writing at slightly staggered wall times between the four cameras (~<1ms). `slot+130` trails +122 by **0.226ms**. No evidence in this 20s scan establishes any of these camera-specific timestamps as the physical sensor exposure moment.
+
+On this headset, `BOOTTIME-MONOTONIC` offset measured **+9005.776s** (2h30m5.776s), stable to <0.03ms during the 20s scan; the difference is highly suspend-state dependent and MUST NOT be hardcoded. Absolute MONOTONIC offsets from earlier probe sessions (~138s) cannot be reused. The observed +30..43 ppm for vendor-vs-MONOTONIC over only 20s is a short-baseline estimate; use long multi-minute Q sync for clock-rate tracking.
+
+**Engineering decision:** The P1 Java app intentionally discards `newest` and consumes only a verified penultimate slot; production `F` uses later copied MONOTONIC. A live pose relative offset of ~-96ms cannot be unconditionally explained or replaced by the measured ~45ms: producer write-lock is not exposure, Pico Connect pose reporting may add offsets, and stereo landmark errors remain. Keep all protection gates (`OBSERVE ONLY`, `mapping_verified=false`, `pose_verified=false`). To improve timestamp accuracy without sacrificing safety, first add an opt-in recorder of per-frame producer BOOTTIME and copied MONOTONIC on the SAME frame, with epoch snapshots and no driver pose modifications. Then use joint pose/optical validation to assess a clock-corrected solver. Do not re-enable tracking corrections from this timing evidence alone.
