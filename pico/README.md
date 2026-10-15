@@ -284,3 +284,23 @@ The camera mapping remains a *candidate* C0->cam0, C3->cam1, C4->cam2, C5->cam3.
 **Critical FAIL / no live correction:** when refitting the same constrained model after excluding an entire station from training, held-out median error was **9.27px (ch1), 44.67px (ch7), 8.07px (ch10), 36.0px (ch13)**. Thus the full joint-fit residual is an optimistic in-sample/interleaved measure; strong leave-one-base-out generalization is absent. An independent earlier capture also yields ~12px median for ch1. Optical spots can represent IR reflections rather than emitter centers, and the unverified camera-body geometry and exposure time can still be wrong.
 
 **Action before P3:** verify Pico vendor K0 frame timestamps against Android clock domains and actual exposure age; correct the clock-domain/drift mapping with synchronization and per-frame timing. Develop station-center and reflected-source robust associations, then rerun leave-one-station-out and session-separated validation. Only after proving metric accuracy with physically tracked devices consider disabling OBSERVE ONLY. Keep `mapping_verified=false`, `pose_verified=false` and `HeadFromBody` unprovisioned for live use.
+
+### P2 safe vendor clock scan: four K0 rings (separate from live streaming)
+
+**WHY:** The three user recordings consistently fit PICO Connect HMD poses ~94–102 ms earlier than QuestLHSync frame receipt, while Android copy→Windows receive accounts for only ~3–8 ms. The K0 factory ring's `slot+122` is a **vendor timestamp candidate**, not a proven exposure time: earlier `--clock` scans placed it about 4.7 seconds **ahead of Android BOOTTIME**, not at a plausible unmodified exposure epoch. Do NOT add a fixed -96 ms to live tracking and do not assume `vendor_raw` is MONOTONIC or BOOTTIME.
+
+New `PicoFrameReader --clock-scan [seconds]` mode reads, **without pixel copies**, the latest finished (not newest/in-flight) slot metadata on all four Binder cameras. It brackets the same instant with Android `System.nanoTime()` (MONOTONIC) and `SystemClock.elapsedRealtimeNanos()` (BOOTTIME); outputs CSV with the raw 64-bit nanoseconds, sensor sequence, newest sequence, ring index and slot index. Samples run ~20 sec by default (5–60 sec allowed). Production `PFR1` binary format, `F`/`T` wire protocol, `lhsyncd`, steamvr driver, private calibration, and `OBSERVE ONLY` are **unchanged**.
+
+Build only in a Windows checkout already configured for Android NDK/JDK/SDK: `python .\pico\build_module.py`. **Do not install** the generated Magisk ZIP. It also produces `pico/build/PicoFrameReader.jar`. To avoid disturbing the live QuestLHSync Java reader, copy this JAR to an entirely separate diagnostic path. With a Pico 4 Pro worn and tracking awake (no active PICO Connect/QuestLHSync camera capture is preferred), PowerShell:
+
+    $ADB = '192.168.23.12:5555'
+    $remote = '/data/local/tmp/PicoFrameReader-clockscan.jar'
+    adb -s $ADB push .\pico\build\PicoFrameReader.jar $remote
+    adb -s $ADB shell su -c "CLASSPATH=$remote /system/bin/app_process /system/bin PicoFrameReader --clock-scan 20" > "$HOME\Downloads\pico-k0-clockscan.csv"
+    if ($LASTEXITCODE -ne 0) { throw 'Pico clock scan failed' }
+    python .\pico\tools\analyze_vendor_clock.py "$HOME\Downloads\pico-k0-clockscan.csv"
+
+Additional regression tests (synthetic, no headset required): `python -m unittest pico.tests.test_vendor_clock -v`. The CSV analyzer checks sequence monotonicity, K0 cadence, vendor-vs-MONOTONIC clock slope and the offsets to both Android clocks. Its status `DIAGNOSTIC_ONLY` **does not imply** sensor exposure or headset pose time is synchronized. The reported vendor clock rate over just 20 s is approximate; do not replace the verified Q ping PC↔Android synchronization with it.
+
+**Decision gate:** an epoch and age model needs evidence that vendor timestamps correspond to actual exposures, with stable offsets across four cameras and device power/suspend states. A direct vendor timestamp *ahead of current BOOTTIME* is not physically a capture timestamp in that epoch; first locate the origin/offset or vendor metadata definition. Only after independent HMD pose correlation and a passed leave-one-station-out geometry test can we promote a live timestamp conversion.
+
