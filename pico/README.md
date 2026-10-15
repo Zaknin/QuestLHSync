@@ -203,3 +203,20 @@ Fitting a limited camera-to-head transform plus a single 3D point using ~740 put
 Channel 10 has a suggestive C3 spot-count response, but **channels 1 and 7 were not optically labeled convincingly** by this pass: HMD poses in their OFF intervals differed from the nearest ON periods, and some spot-count drops began before the ENTER marker. Aggregate blob counts alone cannot identify a station. Avoid claiming that all four were calibrated or enabling tracking corrections.
 
 Keep `mapping_verified=false`, `pose_verified=false`, and PICO `OBSERVE ONLY` pending independent multi-station 3D-ray association, validation of timing/geometry on disjoint motion segments, and corrections-vs-tracker accuracy measurements.
+
+### P2 switch-marker spatial landmark follow-up — 2026-10-15
+
+Offline ray-triangulation and reprojection of the existing 417.6-second switch-marker session isolated **channel-dependent optical signatures**, using private factory Omni/Radtan, provisional C0->cam0/C3->cam1/C4->cam2/C5->cam3 and the still-UNVERIFIED headset/body transform. The operator-confirmed physical station locations are retained. No headset-specific calibration parameters or room coordinates have been committed.
+
+Procedure: triangulate near-synchronous ray pairs from cameras into stationary optical candidate landmarks; project candidates back into the images at interpolated PICO Connect HMD poses. A hit is a detected spot within 20px and peak >=100 **when the landmark is predicted inside the physical camera field of view**. Exclude 5 seconds around human ENTER switch markers and compare 23-second ON windows before/after the OFF interval.
+
+| Power toggled | ON-before hits/visible | OFF hits/visible | ON-after hits/visible | Interpretation |
+| --- | ---: | ---: | ---: | --- |
+| ch13 (FrontLeft-Low) | 224/1182 | **0/2115** | 171/1267 | strong station-correlated optical signature |
+| ch10 (FrontRight-Mid) | 3/885 | **0/2067** | 19/1836 | **weak** optical candidate; independently recheck |
+| ch7 (Rear) | 39/1564 | **0/2413** | 37/1610 | strong station-correlated optical signature |
+| ch1 (FarRight-Top) | — | — | — | **not reliably isolated** from the available views |
+
+An ON-vs-ON comparison of the 3D triangulated candidate point positions yields ~12mm (ch13), ~42mm (ch10), ~22mm (preferred ch7) median-position differences. A secondary ch7 point was ~113mm apart between the before/after ON intervals and must not be used as a precision landmark. **These are internal consistency numbers for optical candidate points, NOT tracking accuracy or station-center measurements.** Candidate 3D sources may include IR reflections, which move no closer to identifying the lighthouse device's actual optical emitter geometry.
+
+The detections are selected from and evaluated on a related recording, with frame correlation, incomplete exposure-time synchronization and a provisional HeadFromBody transform. They are not independent validation of an alignment. Next: use ch13 and ch7 signatures as seed associations; independently validate ch10 and explicitly determine whether ch1 ever has usable optical visibility. The full multi-station solver, station-center association, verified frame/timestamp mapping and correction-vs-physical tracker tests remain blocked. **OBSERVE ONLY** and false `mapping_verified` / `pose_verified` must remain unchanged.
