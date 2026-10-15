@@ -7,7 +7,7 @@ from pathlib import Path
 from pico.tools.analyze_vendor_clock import analyze
 
 HEADER = ["sample", "cam", "seq", "newest_seq", "slot", "ring_index",
-          "vendor_ns", "mono_ns", "boot_ns", "boot_minus_mono_ns"]
+          "ring_ts84_ns", "vendor_ns", "ring_ts130_ns", "mono_ns", "boot_ns", "boot_minus_mono_ns"]
 
 
 class VendorClockTest(unittest.TestCase):
@@ -28,11 +28,14 @@ class VendorClockTest(unittest.TestCase):
                 boot = mono + 138_000_000_000
                 # Fabricated epoch: vendor appears +4.66s from BOOTTIME.
                 vendor = boot + 4_660_000_000
+                ts84 = vendor - 4_736_000_000
+                ts130 = vendor - 230_000
                 if corrupt and i == 200 and cam == 3:
                     vendor -= 100_000_000
                 rows.append(dict(sample=i, cam=cam, seq=1+2*i,
                                  newest_seq=3+2*i, slot=i%5, ring_index=(i+1)%5,
-                                 vendor_ns=vendor, mono_ns=mono, boot_ns=boot,
+                                 ring_ts84_ns=ts84, vendor_ns=vendor, ring_ts130_ns=ts130,
+                                 mono_ns=mono, boot_ns=boot,
                                  boot_minus_mono_ns=boot-mono))
         return rows
 
@@ -44,6 +47,9 @@ class VendorClockTest(unittest.TestCase):
             self.assertEqual(camera["samples"], 450)
             self.assertAlmostEqual(camera["vendor_frame_delta_ms_median"], 40)
             self.assertAlmostEqual(camera["vendor_minus_boot_ms_median"], 4660)
+            self.assertAlmostEqual(camera["ts84_minus_boot_ms_median"], -76)
+            self.assertAlmostEqual(camera["ts122_minus_ts84_ms_median"], 4736)
+            self.assertAlmostEqual(camera["ts122_minus_ts130_ms_median"], 0.230)
             self.assertAlmostEqual(camera["boot_minus_mono_ms_median"], 138000)
             self.assertAlmostEqual(camera["vendor_vs_mono_rate_difference_ppm"], 0, places=4)
 
