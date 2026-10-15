@@ -252,3 +252,23 @@ After the script completes, stop the dashboard recording, press its final Enter,
     python .\pico\tools\check_targeted_capture.py <TXT_PATH> <CSV_PATH>
 
 The checker reports per-phase camera frames and HMD pose differences; it never validates actual station optical identity, and a failure may just mean tracking was interrupted. Share TXT/CSV privately for offline source association. Do not publish headset-specific factory calibration.
+
+### P2 targeted channel 1 and 10 follow-up — 2026-10-15
+
+The user performed the focused guided study with two marked viewpoints for channel 1 and a separate viewpoint for channel 10. A **474-second** continuously recorded QuestLHSync session contained **47,404** K0 frames (11,851 per camera), **86,520** blob candidates, **32,859** HMD poses, and **20** QPC-aligned Enter markers. This was analyzed **offline** with the private factory optics and still-unverified HeadFromBody; no live corrections were applied. A previous separately recorded full OFF/ON session provided out-of-session controls.
+
+**Channel 1 is now optically identifiable as a stationary source candidate**, not a verified station center. Using one newly triangulated candidate and a **12-pixel** projection gate / **peak>=80**, counting frame-camera matches during short stable viewpoint holds:
+
+| Physical switch | View | ON before | OFF | ON restored |
+| --- | --- | ---: | ---: | ---: |
+| ch1 | position A | 10 | **0** | 9 |
+| ch1 | position B (independent viewpoint) | 9 | **0** | 8 |
+| ch1 | separate prior 2026-10-15 OFF/ON recording | 2 | **0** | 8 |
+
+All four cameras contribute some ON matches. The same source remains detectable when **ch10** is switched OFF while ch1 stays ON, supporting channel differentiation. This candidate is found from optical stereo rays, NOT fabricated from SteamVR station coordinates. Individual detections cluster in short bursts, so per-camera frame counts are temporally correlated and not equivalent to independent flashes.
+
+**Channel 10 received independent corroboration.** Re-fitting its optical point using only the new ON windows, its 8–20 px projected-neighbor matches are ON/OFF/ON **13/0/11** in the focused capture (stable holds) and **2/0/15** in the earlier independent power-toggle capture (separate 23s ON / OFF windows at 10px gate, peak>=100). The channel-10 source is still seen while ch1 is OFF. Two other station-correlated candidates ch13 and ch7 were established in the earlier full-toggle session; all four physical channel-to-room mappings were confirmed by the user.
+
+The **spatial-geometry gate FAILS**: fitting a single rigid transformation between four currently reconstructed optical candidate points and four saved SteamVR station-center coordinates yields approximately **0.19m 3D RMS residual**, with pointwise errors of order 0.11–0.25m. The provisional optical points may be infrared reflections and/or affected by incorrect HeadFromBody, exposure timestamps, detector bearing, or constrained viewing geometry. A source switch label is NOT a calibrated physical station-center measurement, and four IDs do not by themselves authorize pose corrections.
+
+The camera mapping remains a *candidate* C0->cam0, C3->cam1, C4->cam2, C5->cam3. Both mapping_verified and pose_verified remain FALSE. Keep Pico `OBSERVE ONLY`. Next: implement an **offline, station-center-constrained multi-source reprojection solver** with bounded body-to-HMD extrinsics and true on/off-negative controls; test on disjoint sessions and report pixel/metric residuals before deciding whether clock/exposure and optical reflections require further capture. **Do not enable any Lighthouse pose modification yet.**
