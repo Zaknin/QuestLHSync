@@ -74,7 +74,7 @@ A private 13-file factory calibration archive from a Pico 4 Pro on Pico OS 5.11.
 
 - Exactly factory cam0..cam3 use the 640x480 Omni + Radtan model corresponding to K0. cam4 is 2328x1748 with fisheye62; cam5/cam6 and cam7 are 400x400 and not part of K0.
 - All four tracking-camera T_BS rotations are proper rigid rotations. T_BS means **body <- camera**; it is not the unverified SteamVR **HMD <- camera** transform.
-- Proposed position-based Binder mapping: C0->cam0, C3->cam1, C4->cam3, C5->cam2. It is not verified against vendor camera-ID metadata.
+- Revised recording-supported Binder mapping candidate: C0->cam0, C3->cam1, **C4->cam2, C5->cam3**. The prior placement-based lower-camera guess (C4->cam3, C5->cam2) contradicted measured Lighthouse image reprojections and is superseded. The camera mapping remains **unverified** against vendor metadata and the full tracking alignment is still not accepted.
 - Reusable mathematical implementation in pico/src/omni_radtan.h; parameterized C++ smoke test in pico/tests/omni_test.cpp. Numerical roundtrip tests using all four private factory calibrations gave 1187-1192 valid points out of 1200 grid points each, with maximum error about 1.1e-9 pixels for valid points. Edge points outside inverse domain are rejected.
 - Optics::LoadPico() is wired into the original solver but deliberately **fails closed** unless mapping_verified=true and pose_verified=true, plus a valid row-major 4x4 HeadFromBody rigid transform.
 - Pico learns the approx. 40 ms camera period instead of using Quest's 37.5/45 Hz period hypotheses.
@@ -160,3 +160,21 @@ To build a locally modified Windows driver, **close SteamVR** (and the running d
 - In the QuestLHSync dashboard click **Record session**, slowly face each of the base stations from several positions in the play space while changing HMD orientation and translation for 60-90 seconds (avoid moving the mounted base stations), then click **Record session** again to flush and close.
 - The file is under `%LOCALAPPDATA%\\QuestLHSync\\recordings\\qlhs-*.txt`; run `python pico/tools/check_capture.py <path>` to verify it contains `U F`, `P 0`, and `S` observations. It is device-specific and not published in the GitHub repo.
 - This is a **data-capture milestone, not a solved calibration**. A camera-station correspondence, rigorous solve and reprojection validation are still required. `mapping_verified` and `pose_verified` must remain false until that is done.
+
+
+### P2 first offline geometry analysis — 2026-10-15
+
+A private 77.8 s recording was analyzed **offline** against device-specific factory Omni/Radtan intrinsics and four SteamVR lighthouse station poses; no factory data or session positions were published. It contained 7,780 frames (1,945 from each camera), 11,535 optical blob candidates, 5,395 HMD poses and four station identities. It was *not* a live tracking correction test.
+
+Key finding: fitting an approximate body->head frame rotation and a 4-DOF lighthouse-to-PICO alignment produced simultaneous optical reprojection matches on all four Binder cameras only after swapping the proposed lower camera assignments:
+
+| Binder ID | Prior draft | Recording-supported candidate |
+| --- | --- | --- |
+| C0 | cam0 | cam0 |
+| C3 | cam1 | cam1 |
+| C4 | cam3 | **cam2** |
+| C5 | cam2 | **cam3** |
+
+On a 1-in-12 frame subsample and a candidate joint 10-parameter rigid fit, the **same world/head pose hypothesis** gave 0 matches within 15px on C4/C5 with the prior mapping, versus 28+28 matches with the swapped mapping; upper cameras each retained matches. This model currently produces usable matches chiefly for two of the four lighthouse stations. Median matched residuals of about 7–9px are **far too large to claim tracking-grade calibration** and include possible false positives (the spot detector has no station-ID label). These counts are model-dependent correspondences, not ground truth.
+
+`pico/tools/prepare_calibration.py` now generates C0->cam0, C3->cam1, C4->cam2, C5->cam3, still with `mapping_verified=false`, `pose_verified=false`, `HeadFromBody=null` by default. DO NOT set flags or enable actual pose corrections until independent station association, reprojection error and pose mapping are validated.
