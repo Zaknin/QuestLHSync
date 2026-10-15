@@ -264,7 +264,7 @@ public final class PicoFrameReader {
                     long boot = bb + (ba - bb) / 2;
                     // No floating-point conversion of the 64-bit nanoseconds.
                     System.out.println(count[k]++ + "," + c.id + "," + chosen + "," + newest +
-                        ""," + chosenSlot + "," + ringIdx + "," + ts84 + "," +
+                        "," + chosenSlot + "," + ringIdx + "," + ts84 + "," +
                         vendor + "," + ts130 + "," + mono + "," + boot + "," + (boot - mono));
                     previous[k] = chosen;
                 }
