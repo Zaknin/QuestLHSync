@@ -189,3 +189,17 @@ A **read-only, human-assisted** power-toggle study can label which Lighthouse sp
 4. Stop **Record session** when prompted. The script writes a sibling `qlhs-...-switches-....csv` file with action/channel/serial and the ENTER instant in `QpcNs`; the main QuestLHSync recording uses the same Windows QPC timebase as nanoseconds in its first column. The event is an operator action, not a verified laser power transition; ignore transition margins during analysis. Send the TXT and CSV together.
 
 This controlled study is intended to corroborate unlabeled bright spots against on/off state, not to assert an already-verified Pico camera mapping or accurate alignment.
+
+### P2 controlled station power-toggle findings — 2026-10-15
+
+The user's channel-to-physical-place identifications for channels 13 (FrontLeft-Low), 10 (FrontRight-Mid), 1 (FarRight-Top), 7 (Rear) are **confirmed by direct user inspection**. The PowerShell marker script records human ENTER presses in the same QPC nanosecond timebase as the QuestLHSync recording; these marks are not hardware telemetry for the moment the Lighthouse lasers fully switch.
+
+A private ~417.6-second record and its 10-marker CSV were analyzed offline. The record contains 41,763 raw camera frames, 44,906 optical blob candidates and 29,112 HMD poses. An earlier shorter record had only the initial marker and was excluded from the controlled OFF/ON comparisons. No private calibration coefficients, room coordinates, or recordings are included here.
+
+**High-confidence positive control for channel 13:** with the revised C4->factory cam2 hypothesis and a preliminary HeadFromBody, triangulation from C4 bright-spot rays recovered a stable 3D landmark. Three cameras C0/C4/C5 independently project bright detections to that landmark. Across the OFF-13 interval **no bright detections appeared within 20 px** of its predicted image position on any of those cameras, whereas the before/after ON intervals contain many hits. For C4 specifically the before/during/after counts within 20 px at peak>100 were **134 / 0 / 167**, despite 785 OFF frames with the landmark predicted in-image. This strongly associates that landmark with station channel 13; it is not proof of global Lighthouse alignment.
+
+Fitting a limited camera-to-head transform plus a single 3D point using ~740 putative channel-13 spot correspondences improved median nearest-blob reprojection error on a 1-in-4 held-out *interleaved* subset from ~7.84 px to ~2.38 px. This is not independently time-separated validation (neighboring frames are correlated), not a full multi-station calibration, and no fit values may be installed in the driver.
+
+Channel 10 has a suggestive C3 spot-count response, but **channels 1 and 7 were not optically labeled convincingly** by this pass: HMD poses in their OFF intervals differed from the nearest ON periods, and some spot-count drops began before the ENTER marker. Aggregate blob counts alone cannot identify a station. Avoid claiming that all four were calibrated or enabling tracking corrections.
+
+Keep `mapping_verified=false`, `pose_verified=false`, and PICO `OBSERVE ONLY` pending independent multi-station 3D-ray association, validation of timing/geometry on disjoint motion segments, and corrections-vs-tracker accuracy measurements.
