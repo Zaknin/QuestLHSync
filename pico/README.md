@@ -178,3 +178,14 @@ Key finding: fitting an approximate body->head frame rotation and a 4-DOF lighth
 On a 1-in-12 frame subsample and a candidate joint 10-parameter rigid fit, the **same world/head pose hypothesis** gave 0 matches within 15px on C4/C5 with the prior mapping, versus 28+28 matches with the swapped mapping; upper cameras each retained matches. This model currently produces usable matches chiefly for two of the four lighthouse stations. Median matched residuals of about 7–9px are **far too large to claim tracking-grade calibration** and include possible false positives (the spot detector has no station-ID label). These counts are model-dependent correspondences, not ground truth.
 
 `pico/tools/prepare_calibration.py` now generates C0->cam0, C3->cam1, C4->cam2, C5->cam3, still with `mapping_verified=false`, `pose_verified=false`, `HeadFromBody=null` by default. DO NOT set flags or enable actual pose corrections until independent station association, reprojection error and pose mapping are validated.
+
+### One-at-a-time base station power-toggle markers (manual ENTER)
+
+A **read-only, human-assisted** power-toggle study can label which Lighthouse spots belong to which station. Use `pico/tools/mark_station_switches.ps1` with PowerShell 7+; it **does not** switch power itself and does not enable Pico tracking corrections.
+
+1. Wear the Pico with PICO Connect/SteamVR running, start **Record session** in QuestLHSync and leave all four stations ON.
+2. In a separate PowerShell 7 terminal, run: `pwsh -NoProfile -ExecutionPolicy Bypass -File .\pico\tools\mark_station_switches.ps1`.
+3. For each station (channels 1, 7, 10, 13), look towards it; physically turn **OFF** that station then immediately press Enter; wait for the script; physically turn it **ON**, press Enter; let the script wait for spin-up. Leave the other three stations running at all times.
+4. Stop **Record session** when prompted. The script writes a sibling `qlhs-...-switches-....csv` file with action/channel/serial and the ENTER instant in `QpcNs`; the main QuestLHSync recording uses the same Windows QPC timebase as nanoseconds in its first column. The event is an operator action, not a verified laser power transition; ignore transition margins during analysis. Send the TXT and CSV together.
+
+This controlled study is intended to corroborate unlabeled bright spots against on/off state, not to assert an already-verified Pico camera mapping or accurate alignment.
