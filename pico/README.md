@@ -220,3 +220,21 @@ Procedure: triangulate near-synchronous ray pairs from cameras into stationary o
 An ON-vs-ON comparison of the 3D triangulated candidate point positions yields ~12mm (ch13), ~42mm (ch10), ~22mm (preferred ch7) median-position differences. A secondary ch7 point was ~113mm apart between the before/after ON intervals and must not be used as a precision landmark. **These are internal consistency numbers for optical candidate points, NOT tracking accuracy or station-center measurements.** Candidate 3D sources may include IR reflections, which move no closer to identifying the lighthouse device's actual optical emitter geometry.
 
 The detections are selected from and evaluated on a related recording, with frame correlation, incomplete exposure-time synchronization and a provisional HeadFromBody transform. They are not independent validation of an alignment. Next: use ch13 and ch7 signatures as seed associations; independently validate ch10 and explicitly determine whether ch1 ever has usable optical visibility. The full multi-station solver, station-center association, verified frame/timestamp mapping and correction-vs-physical tracker tests remain blocked. **OBSERVE ONLY** and false `mapping_verified` / `pose_verified` must remain unchanged.
+
+### P2 independent-recording challenge and focused follow-up
+
+Two older recordings were reprocessed independently of the controlled 2026-10-15 OFF/ON session, using the same *provisional* Pico camera mapping and HeadFromBody hypothesis. Unlike the OFF/ON session, these recordings have no complete toggling cycle and are **positive-only**, so they cannot independently establish channel identity:
+
+| Provisional optical landmark | Earlier 77.8 s recording, matches/visible | Separate ~47.7 s all-ON recording, matches/visible |
+| --- | ---: | ---: |
+| channel-13 candidate | 7/3,520 | 243/1,431 |
+| channel-10 candidate | 37/2,519 | 21/1,878 |
+| channel-7 preferred candidate | 3/2,236 | 2/163 (mostly out of FOV) |
+
+Counting uses >=100 peak, 20-pixel predicted-location radius, and only frames with candidate projected inside field of view. This does **not** establish unbiased false-match rates. A frequently observed unrelated landmark (~7937/8893 hits/visible in the main recording) remained detected on **719/735 C3 frames while station 1 was OFF**; do not label that landmark as channel 1. The channel-1 evidence remains insufficient.
+
+**Important geometry falsification:** measured distances between current provisional point centers are NOT the SteamVR station-center distances: the (13,7), (13,10), (7,10) pairs give about **2.674/1.800/3.418 m** for the reconstructed optical candidates versus **2.858/2.013/3.782 m** for SteamVR physical station coordinates. Differences of ~0.18–0.36 m cannot be explained away as demonstrated tracking-grade accuracy. The optical candidates may be reflections, and the current HeadFromBody/timing could be inaccurate. Do not fit a correction by treating candidate points as real lighthouse emitter centers.
+
+To avoid another long, poorly controlled session, `pico/tools/capture_missing_stations.ps1` requests only **two passes on channel 1 from different viewpoints** and **one pass on channel 10**. Each pass records the manual switch instant *and* separate Enter markers after returning to exactly the same viewing pose (`BASELINE_READY`, `OFF`, `OFF_READY`, `ON`, `ON_READY`, `PASS_DONE`), avoiding the previous head-pose mismatch. A fresh **Record session** must run continuously. Other stations remain on; the user operates station power manually. Data stay private; no live pose corrections are enabled.
+
+Keep offline model and driver in OBSERVE ONLY with both verification flags false until source association is demonstrably independent and station geometry/timestamps are checked.
