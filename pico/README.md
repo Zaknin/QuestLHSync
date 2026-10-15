@@ -304,3 +304,17 @@ Additional regression tests (synthetic, no headset required): `python -m unittes
 
 **Decision gate:** an epoch and age model needs evidence that vendor timestamps correspond to actual exposures, with stable offsets across four cameras and device power/suspend states. A direct vendor timestamp *ahead of current BOOTTIME* is not physically a capture timestamp in that epoch; first locate the origin/offset or vendor metadata definition. Only after independent HMD pose correlation and a passed leave-one-station-out geometry test can we promote a live timestamp conversion.
 
+#### Evidence for an earlier metadata timestamp at slot+84
+
+**Offline evidence from 2026-10-15 (not live-calibrated):** 24 private raw K0 ring dumps (6 per camera, 5 stable slots each = **120 frame metadata snapshots**) were rescanned WITHOUT looking at pixel data. In addition to `slot+122`, **`slot+84` is a distinct, positive 64-bit increasing nanosecond-like field**. Both fields advance roughly every 40ms on successive even-step frame sequence numbers; `slot+122` is almost exactly 39.999896ms per frame, while `slot+84` varies by sensor/scheduling jitter. `slot+130` trails `slot+122` consistently by ~0.226ms.
+
+| Binder camera | Samples | median `slot+122` minus `slot+84` | median `slot+84` consecutive step |
+| --- | ---: | ---: | ---: |
+| C0 | 30 | 4736.506 ms | 40.008 ms |
+| C3 | 30 | 4736.042 ms | 40.089 ms |
+| C4 | 30 | 4736.047 ms | 40.078 ms |
+| C5 | 30 | 4735.734 ms | 39.921 ms |
+
+`slot+122` was previously observed about 4.66–4.70s *ahead* of contemporaneous Android BOOTTIME in a separate live probe; these samples suggest `slot+84` might be approximately **tens of milliseconds behind BOOTTIME** instead of seconds ahead. **This subtraction combines separate sessions and is merely a plausibility estimate**, not a direct clock-domain validation or measured exposure age. `slot+84` might be camera capture, queueing or another vendor event. Never equate it with physical exposure without tracing the metadata semantics.
+
+Reproduce aggregate stats privately: `python pico/tools/inspect_k0_ring_clocks.py <old_raw_ring.bin_or_archive.zip>`; public repo contains only the analyzer and above aggregate offsets, not private ring contents. The updated `--clock-scan` mode outputs raw `ring_ts84_ns`, `vendor_ns` (+122) and `ring_ts130_ns` (+130), alongside same-instant Android MONOTONIC/BOOTTIME; its CSV analyzer checks each field independently. The **live device run is pending**. Until then, the actual P1 `F` timestamp stays the MONOTONIC copy timestamp, NOT slot+84, and all corrections remain OFF.
