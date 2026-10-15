@@ -10,9 +10,11 @@ from pathlib import Path
 import re
 import tarfile
 
-# Observed Binder IDs 0/3/4/5 have matching visual camera positions; factory
-# cam0/1/3/2 is a PHYSICAL-PLACEMENT HYPOTHESIS, not verified via vendor metadata.
-BINDER_TO_FACTORY_HYPOTHESIS = {0: 0, 3: 1, 4: 3, 5: 2}
+# Offline ray-to-Lighthouse comparisons from a 77.8 s Pico 4 Pro recording
+# favor Binder C4->factory cam2 and C5->factory cam3, reversing our earlier
+# placement-based guess. This is evidence-based but not independently verified
+# against vendor sensor-ID metadata; preserve mapping_verified=false.
+BINDER_TO_FACTORY_HYPOTHESIS = {0: 0, 3: 1, 4: 2, 5: 3}
 
 
 def vector(text, key):
