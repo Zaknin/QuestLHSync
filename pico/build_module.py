@@ -55,20 +55,10 @@ def clang_executable(sdk):
     return exe
 
 
-def build():
+def build_reader(sdk):
+    """Compile only the Pico Java reader (no NDK binaries, no ZIP installation)."""
     OUT.mkdir(exist_ok=True)
     BUILD.mkdir(exist_ok=True)
-    sdk = sdk_path()
-    clang = clang_executable(sdk)
-    flags = [clang, "--target=aarch64-linux-android29", "-std=gnu11", "-O2", "-Wall", "-Wextra", "-fPIE", "-pie"]
-    version_text = (ROOT / "src/common/qlhs_status.h").read_text(encoding="utf-8")
-    version = re.search(r'#define QLHS_RELEASE "([^"]+)"', version_text).group(1)
-    inc = ["-I", ROOT / "src/headset"]
-    daemon = BUILD / "lhsyncd"
-    sight = BUILD / "pico_lhsight"
-    run(flags + [f'-DMODULE_VERSION="v{version}-pico-p1"'] + inc +
-        [ROOT / "src/headset/lhsyncd.c", HERE / "src/pico.c", "-llog", "-o", daemon])
-    run(flags + [HERE / "src/lhsight_pico.c", "-o", sight])
     android_jar = newest(sdk / "platforms", "*/android.jar")
     d8 = newest(sdk / "build-tools", "*/d8.bat" if sys.platform == "win32" else "*/d8")
     classes = BUILD / "classes"
@@ -87,6 +77,24 @@ def build():
         raise RuntimeError("d8 produced no classes.dex")
     reader_jar = BUILD / "PicoFrameReader.jar"
     run(["jar", "cf", reader_jar, "-C", dex, "classes.dex"])
+    return reader_jar
+
+
+def build():
+    OUT.mkdir(exist_ok=True)
+    BUILD.mkdir(exist_ok=True)
+    sdk = sdk_path()
+    clang = clang_executable(sdk)
+    flags = [clang, "--target=aarch64-linux-android29", "-std=gnu11", "-O2", "-Wall", "-Wextra", "-fPIE", "-pie"]
+    version_text = (ROOT / "src/common/qlhs_status.h").read_text(encoding="utf-8")
+    version = re.search(r'#define QLHS_RELEASE "([^"]+)"', version_text).group(1)
+    inc = ["-I", ROOT / "src/headset"]
+    daemon = BUILD / "lhsyncd"
+    sight = BUILD / "pico_lhsight"
+    run(flags + [f'-DMODULE_VERSION="v{version}-pico-p1"'] + inc +
+        [ROOT / "src/headset/lhsyncd.c", HERE / "src/pico.c", "-llog", "-o", daemon])
+    run(flags + [HERE / "src/lhsight_pico.c", "-o", sight])
+    reader_jar = build_reader(sdk)
 
     path = OUT / f"QuestLHSync-pico-module-{version}-p1.zip"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -111,4 +119,10 @@ def build():
 
 
 if __name__ == "__main__":
-    build()
+    if sys.argv[1:] == ["--reader-only"]:
+        print(f"Built diagnostic-capable Java reader: {build_reader(sdk_path())}")
+        print("No native daemon or Magisk module installed.")
+    elif len(sys.argv) == 1:
+        build()
+    else:
+        raise SystemExit("usage: python pico/build_module.py [--reader-only]")
