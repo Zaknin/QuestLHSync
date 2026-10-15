@@ -238,3 +238,17 @@ Counting uses >=100 peak, 20-pixel predicted-location radius, and only frames wi
 To avoid another long, poorly controlled session, `pico/tools/capture_missing_stations.ps1` requests only **two passes on channel 1 from different viewpoints** and **one pass on channel 10**. Each pass records the manual switch instant *and* separate Enter markers after returning to exactly the same viewing pose (`BASELINE_READY`, `OFF`, `OFF_READY`, `ON`, `ON_READY`, `PASS_DONE`), avoiding the previous head-pose mismatch. A fresh **Record session** must run continuously. Other stations remain on; the user operates station power manually. Data stay private; no live pose corrections are enabled.
 
 Keep offline model and driver in OBSERVE ONLY with both verification flags false until source association is demonstrably independent and station geometry/timestamps are checked.
+
+#### Running the focused channel 1 / 10 test
+
+With **all four stations ON** and PICO Connect/SteamVR tracking stable, press **Record session** in the QuestLHSync dashboard. Run in a second PowerShell 7 terminal:
+
+    pwsh -NoProfile -ExecutionPolicy Bypass -File .\pico\tools\capture_missing_stations.ps1
+
+The guided test asks for two viewpoints on the channel-1 physical station and one on channel 10. For each pass: return to your marked feet/head pose for ON baseline; after turning the specified station OFF press Enter immediately, then **return to the same mark** and press Enter a second time before the OFF hold. Repeat for ON. Leave the other three powered. The operator must not let HMD tracking cameras sleep.
+
+After the script completes, stop the dashboard recording, press its final Enter, and identify the latest `qlhs-*.txt` plus its sibling `qlhs-*-targeted-switches-*.csv`. Review the data with:
+
+    python .\pico\tools\check_targeted_capture.py <TXT_PATH> <CSV_PATH>
+
+The checker reports per-phase camera frames and HMD pose differences; it never validates actual station optical identity, and a failure may just mean tracking was interrupted. Share TXT/CSV privately for offline source association. Do not publish headset-specific factory calibration.
