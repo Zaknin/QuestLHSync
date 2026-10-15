@@ -73,13 +73,29 @@ def analyze(path):
         if min(seq_diff) <= 0 or min(mono_diff) <= 0 or min(vendor_diff) <= 0 or min(ts84_diff) <= 0:
             errors.append(f"C{cam}: nonmonotonic clock or sequence")
         contiguous = [delta / 1e6 for delta, ds in zip(vendor_diff, seq_diff) if ds == 2]
+        if not contiguous:
+            errors.append(f"C{cam}: no adjacent 40ms K0 frame steps")
+        # A completed penultimate slot is deliberately one 25Hz frame behind
+        # newest. Only the observed producer→probe age is measured directly.
+        period = median(contiguous) if contiguous else None
+        ages = [(row["boot_ns"] - row["ring_ts84_ns"]) / 1e6 for row in rows]
+        selected_lags = [row["newest_seq"] - row["seq"] for row in rows]
+        ring_steps = [((row["ring_index"] - row["slot"]) % 5) for row in rows]
+        boot_mono = [(row["boot_ns"] - row["mono_ns"]) / 1e6 for row in rows]
         span = (rows[-1]["mono_ns"] - rows[0]["mono_ns"]) / 1e9
         result["per_camera"][str(cam)] = {
             "samples": len(rows), "span_s": round(span, 3),
             "samples_per_s": round((len(rows) - 1) / span, 2) if span > 0 else None,
             "vendor_frame_delta_ms_median": median(contiguous) if contiguous else None,
             "ts84_frame_delta_ms_median": median([d / 1e6 for d, ds in zip(ts84_diff, seq_diff) if ds == 2]) if contiguous else None,
-            "producer_write_to_probe_ms_median": median((r["boot_ns"] - r["ring_ts84_ns"]) / 1e6 for r in rows),
+            "producer_write_to_probe_ms_median": median(ages),
+            "producer_write_to_probe_ms_p10": percentile(ages, .1),
+            "producer_write_to_probe_ms_p90": percentile(ages, .9),
+            "selected_exactly_one_frame_behind_fraction": sum(q == 2 for q in selected_lags) / len(rows),
+            "ring_pointer_one_slot_ahead_fraction": sum(q == 1 for q in ring_steps) / len(rows),
+            # Heuristic decomposition, not observed latest-frame age or exposure.
+            "age_after_subtracting_one_period_ms": (median(ages) - period) if period else None,
+            "boot_minus_mono_span_ms": max(boot_mono) - min(boot_mono),
             "ts84_minus_boot_ms_median": median((r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows),
             "ts84_minus_boot_ms_p10": percentile([(r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows], .1),
             "ts84_minus_boot_ms_p90": percentile([(r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows], .9),
@@ -115,6 +131,12 @@ def main():
                   f"vendor step {row['vendor_frame_delta_ms_median']} ms")
             print(f"      producer write-lock -> probe: {row['producer_write_to_probe_ms_median']:.2f}ms "
                   f"(BOOTTIME-verified, not exposure age)")
+            print(f"      one-frame-old selection: {row['selected_exactly_one_frame_behind_fraction']:.1%}; "
+                  f"ring pointer one slot ahead: {row['ring_pointer_one_slot_ahead_fraction']:.1%}; "
+                  f"age minus 40ms frame: {row['age_after_subtracting_one_period_ms']:.2f}ms")
+            print(f"      producer-age p10..p90: {row['producer_write_to_probe_ms_p10']:.2f}.."
+                  f"{row['producer_write_to_probe_ms_p90']:.2f}ms; "
+                  f"BOOTTIME-MONO offset stability: {row['boot_minus_mono_span_ms']:.3f}ms")
             print(f"      slot+84 - BOOTTIME: {row['ts84_minus_boot_ms_median']:+.2f}ms, "
                   f"p10..p90 {row['ts84_minus_boot_ms_p10']:+.2f}.."
                   f"{row['ts84_minus_boot_ms_p90']:+.2f}ms")
