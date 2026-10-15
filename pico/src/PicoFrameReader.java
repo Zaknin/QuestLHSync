@@ -205,8 +205,10 @@ public final class PicoFrameReader {
      *
      * Reads only stable shared-memory metadata from the 4 existing K0 rings.
      * Sampling a completed (not newest) slot intentionally adds >= one frame
-     * of uncertainty. Inspect both slot+84 and slot+122/130 timestamp
-     * candidates: neither offset is a validated exposure epoch.
+     * of uncertainty. Firmware DataBuffer::lockForWrite calls
+     * systemTime(SYSTEM_TIME_BOOTTIME=4) into slot+84: a producer WRITE-LOCK
+     * timestamp (not the camera exposure!). slot+122/130 are separate
+     * vendor metadata whose epoch and exposure semantics are unverified.
      * Unlike production, this tool prints text CSV to stdout.
      */
     private static void scanClock(int seconds) throws Exception {
