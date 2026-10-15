@@ -12,7 +12,8 @@ from statistics import median
 
 CAMERAS = (0, 3, 4, 5)
 REQUIRED = {"sample", "cam", "seq", "newest_seq", "slot", "ring_index",
-            "vendor_ns", "mono_ns", "boot_ns", "boot_minus_mono_ns"}
+            "ring_ts84_ns", "vendor_ns", "ring_ts130_ns",
+            "mono_ns", "boot_ns", "boot_minus_mono_ns"}
 
 
 def percentile(items, pct):
@@ -67,7 +68,8 @@ def analyze(path):
         seq_diff = [b["seq"] - a["seq"] for a, b in zip(rows, rows[1:])]
         mono_diff = [b["mono_ns"] - a["mono_ns"] for a, b in zip(rows, rows[1:])]
         vendor_diff = [b["vendor_ns"] - a["vendor_ns"] for a, b in zip(rows, rows[1:])]
-        if min(seq_diff) <= 0 or min(mono_diff) <= 0 or min(vendor_diff) <= 0:
+        ts84_diff = [b["ring_ts84_ns"] - a["ring_ts84_ns"] for a, b in zip(rows, rows[1:])]
+        if min(seq_diff) <= 0 or min(mono_diff) <= 0 or min(vendor_diff) <= 0 or min(ts84_diff) <= 0:
             errors.append(f"C{cam}: nonmonotonic clock or sequence")
         contiguous = [delta / 1e6 for delta, ds in zip(vendor_diff, seq_diff) if ds == 2]
         span = (rows[-1]["mono_ns"] - rows[0]["mono_ns"]) / 1e9
@@ -75,6 +77,12 @@ def analyze(path):
             "samples": len(rows), "span_s": round(span, 3),
             "samples_per_s": round((len(rows) - 1) / span, 2) if span > 0 else None,
             "vendor_frame_delta_ms_median": median(contiguous) if contiguous else None,
+            "ts84_frame_delta_ms_median": median([d / 1e6 for d, ds in zip(ts84_diff, seq_diff) if ds == 2]) if contiguous else None,
+            "ts84_minus_boot_ms_median": median((r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows),
+            "ts84_minus_boot_ms_p10": percentile([(r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows], .1),
+            "ts84_minus_boot_ms_p90": percentile([(r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows], .9),
+            "ts122_minus_ts84_ms_median": median((r["vendor_ns"] - r["ring_ts84_ns"]) / 1e6 for r in rows),
+            "ts122_minus_ts130_ms_median": median((r["vendor_ns"] - r["ring_ts130_ns"]) / 1e6 for r in rows),
             "vendor_minus_mono_ms_median": median((r["vendor_ns"] - r["mono_ns"]) / 1e6 for r in rows),
             "vendor_minus_boot_ms_median": median((r["vendor_ns"] - r["boot_ns"]) / 1e6 for r in rows),
             "vendor_minus_boot_ms_p10": percentile([(r["vendor_ns"] - r["boot_ns"]) / 1e6 for r in rows], .1),
@@ -103,6 +111,11 @@ def main():
             print(f"  C{cam}: {row['samples']} frames / {row['span_s']:.1f}s, "
                   f"rate {row['samples_per_s']:.1f}/s, "
                   f"vendor step {row['vendor_frame_delta_ms_median']} ms")
+            print(f"      slot+84 - BOOTTIME: {row['ts84_minus_boot_ms_median']:+.2f}ms, "
+                  f"p10..p90 {row['ts84_minus_boot_ms_p10']:+.2f}.."
+                  f"{row['ts84_minus_boot_ms_p90']:+.2f}ms")
+            print(f"      slot+122 - slot+84: {row['ts122_minus_ts84_ms_median']:+.3f}ms; "
+                  f"slot+122 - slot+130: {row['ts122_minus_ts130_ms_median']:+.3f}ms")
             print(f"      vendor-BOOTTIME: median {row['vendor_minus_boot_ms_median']:+.2f}ms, "
                   f"p10..p90 {row['vendor_minus_boot_ms_p10']:+.2f}.."
                   f"{row['vendor_minus_boot_ms_p90']:+.2f}ms")
