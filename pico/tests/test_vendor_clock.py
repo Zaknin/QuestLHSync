@@ -52,6 +52,10 @@ class VendorClockTest(unittest.TestCase):
             self.assertAlmostEqual(camera["ts122_minus_ts130_ms_median"], 0.230)
             self.assertAlmostEqual(camera["boot_minus_mono_ms_median"], 138000)
             self.assertAlmostEqual(camera["vendor_vs_mono_rate_difference_ppm"], 0, places=4)
+            self.assertEqual(camera["selected_exactly_one_frame_behind_fraction"], 1.0)
+            self.assertEqual(camera["ring_pointer_one_slot_ahead_fraction"], 1.0)
+            self.assertAlmostEqual(camera["age_after_subtracting_one_period_ms"], 36, places=2)
+            self.assertAlmostEqual(camera["boot_minus_mono_span_ms"], 0, places=4)
 
     def test_detects_nonmonotonic_vendor(self):
         report = analyze(self.save(self.synthetic(corrupt=True)))
