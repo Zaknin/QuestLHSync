@@ -199,7 +199,96 @@ public final class PicoFrameReader {
         }
     }
 
+
+    /**
+     * Independent P2 clock-domain scan (never opens a new capture stream).
+     *
+     * Reads only stable shared-memory metadata from the 4 existing K0 rings.
+     * Sampling a completed (not newest) slot intentionally adds >= one frame
+     * of uncertainty, so vendor-minus-boot is NOT a measured exposure age.
+     * Unlike production, this tool prints text CSV to stdout.
+     */
+    private static void scanClock(int seconds) throws Exception {
+        if (seconds < 5 || seconds > 60)
+            throw new IllegalArgumentException("--clock-scan duration must be 5..60 seconds");
+        IBinder svc = getService();
+        if (svc == null || !"pvr.ITrackingService".equals(svc.getInterfaceDescriptor()))
+            throw new IllegalStateException("pvr.ITrackingService unavailable");
+        Camera[] cc = new Camera[CAMERAS.length];
+        try {
+            for (int i = 0; i < CAMERAS.length; i++)
+                cc[i] = new Camera(svc, "pvr.ITrackingService", CAMERAS[i], SENSORS[i]);
+            System.out.println("sample,cam,seq,newest_seq,slot,ring_index,vendor_ns,mono_ns,boot_ns,boot_minus_mono_ns");
+            long start = System.nanoTime(), end = start + seconds * 1_000_000_000L;
+            long[] previous = new long[CAMERAS.length];
+            int[] count = new int[CAMERAS.length];
+            while (System.nanoTime() < end) {
+                for (int k = 0; k < cc.length; k++) {
+                    Camera c = cc[k];
+                    int ringIdx = c.view.getInt(12);
+                    if (ringIdx < 0 || ringIdx >= SLOTS) continue;
+                    long newest = 0, chosen = 0, vendor = 0;
+                    int chosenSlot = -1;
+                    // One scan to identify the newest slot; never read that
+                    // potentially in-flight slot as a stable frame.
+                    for (int j = 0; j < SLOTS; j++) {
+                        long q = c.view.getLong(HEADER + j * STRIDE + 146);
+                        if ((q & 1L) != 0 && q > newest) newest = q;
+                    }
+                    for (int j = 0; j < SLOTS; j++) {
+                        int base = HEADER + j * STRIDE;
+                        long q = c.view.getLong(base + 146);
+                        long v = c.view.getLong(base + 122);
+                        if ((q & 1L) != 0 && q < newest && q > chosen && v > 0 &&
+                            c.view.getInt(base + 110) == 4) {
+                            chosen = q; vendor = v; chosenSlot = j;
+                        }
+                    }
+                    if (chosenSlot < 0 || chosen <= previous[k]) continue;
+                    // Bracket BOOTTIME and MONOTONIC at the same snapshot.
+                    long mb = System.nanoTime();
+                    long bb = SystemClock.elapsedRealtimeNanos();
+                    long ba = SystemClock.elapsedRealtimeNanos();
+                    long ma = System.nanoTime();
+                    int base = HEADER + chosenSlot * STRIDE;
+                    if (ringIdx != c.view.getInt(12) ||
+                        chosen != c.view.getLong(base + 146) ||
+                        vendor != c.view.getLong(base + 122) ||
+                        c.view.getInt(base + 110) != 4)
+                        continue;
+                    long mono = mb + (ma - mb) / 2;
+                    long boot = bb + (ba - bb) / 2;
+                    // No floating-point conversion of the 64-bit nanoseconds.
+                    System.out.println(count[k]++ + "," + c.id + "," + chosen + "," + newest +
+                        "," + chosenSlot + "," + ringIdx + "," + vendor + "," +
+                        mono + "," + boot + "," + (boot - mono));
+                    previous[k] = chosen;
+                }
+                Thread.sleep(10);
+            }
+            for (int k = 0; k < cc.length; k++) {
+                System.err.println("Pico clock scan C" + cc[k].id + ": " + count[k] +
+                    " unique completed K0 frames in " + seconds + " s");
+                if (count[k] < seconds * 15)
+                    throw new IllegalStateException("C" + cc[k].id + ": low clock-scan rate; tracking asleep?");
+            }
+        } finally {
+            for (Camera c : cc) if (c != null) c.close();
+        }
+    }
+
     public static void main(String[] args) {
+        if (args.length >= 1 && "--clock-scan".equals(args[0])) {
+            try {
+                if (args.length > 2) throw new IllegalArgumentException("usage: --clock-scan [seconds]");
+                scanClock(args.length == 2 ? Integer.parseInt(args[1]) : 20);
+            } catch (Throwable e) {
+                System.err.println("Pico clock scan FAILED: " + e);
+                e.printStackTrace(System.err);
+                System.exit(3);
+            }
+            return;
+        }
         if (args.length == 1 && "--clock".equals(args[0])) {
             try {
                 probeClock();
