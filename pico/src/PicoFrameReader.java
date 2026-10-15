@@ -205,7 +205,8 @@ public final class PicoFrameReader {
      *
      * Reads only stable shared-memory metadata from the 4 existing K0 rings.
      * Sampling a completed (not newest) slot intentionally adds >= one frame
-     * of uncertainty, so vendor-minus-boot is NOT a measured exposure age.
+     * of uncertainty. Inspect both slot+84 and slot+122/130 timestamp
+     * candidates: neither offset is a validated exposure epoch.
      * Unlike production, this tool prints text CSV to stdout.
      */
     private static void scanClock(int seconds) throws Exception {
@@ -218,7 +219,7 @@ public final class PicoFrameReader {
         try {
             for (int i = 0; i < CAMERAS.length; i++)
                 cc[i] = new Camera(svc, "pvr.ITrackingService", CAMERAS[i], SENSORS[i]);
-            System.out.println("sample,cam,seq,newest_seq,slot,ring_index,vendor_ns,mono_ns,boot_ns,boot_minus_mono_ns");
+            System.out.println("sample,cam,seq,newest_seq,slot,ring_index,ring_ts84_ns,vendor_ns,ring_ts130_ns,mono_ns,boot_ns,boot_minus_mono_ns");
             long start = System.nanoTime(), end = start + seconds * 1_000_000_000L;
             long[] previous = new long[CAMERAS.length];
             int[] count = new int[CAMERAS.length];
@@ -227,7 +228,7 @@ public final class PicoFrameReader {
                     Camera c = cc[k];
                     int ringIdx = c.view.getInt(12);
                     if (ringIdx < 0 || ringIdx >= SLOTS) continue;
-                    long newest = 0, chosen = 0, vendor = 0;
+                    long newest = 0, chosen = 0, vendor = 0, ts84 = 0, ts130 = 0;
                     int chosenSlot = -1;
                     // One scan to identify the newest slot; never read that
                     // potentially in-flight slot as a stable frame.
@@ -241,7 +242,8 @@ public final class PicoFrameReader {
                         long v = c.view.getLong(base + 122);
                         if ((q & 1L) != 0 && q < newest && q > chosen && v > 0 &&
                             c.view.getInt(base + 110) == 4) {
-                            chosen = q; vendor = v; chosenSlot = j;
+                            chosen = q; vendor = v; ts84 = c.view.getLong(base + 84);
+                            ts130 = c.view.getLong(base + 130); chosenSlot = j;
                         }
                     }
                     if (chosenSlot < 0 || chosen <= previous[k]) continue;
@@ -254,14 +256,16 @@ public final class PicoFrameReader {
                     if (ringIdx != c.view.getInt(12) ||
                         chosen != c.view.getLong(base + 146) ||
                         vendor != c.view.getLong(base + 122) ||
+                        ts84 != c.view.getLong(base + 84) ||
+                        ts130 != c.view.getLong(base + 130) ||
                         c.view.getInt(base + 110) != 4)
                         continue;
                     long mono = mb + (ma - mb) / 2;
                     long boot = bb + (ba - bb) / 2;
                     // No floating-point conversion of the 64-bit nanoseconds.
                     System.out.println(count[k]++ + "," + c.id + "," + chosen + "," + newest +
-                        "," + chosenSlot + "," + ringIdx + "," + vendor + "," +
-                        mono + "," + boot + "," + (boot - mono));
+                        ""," + chosenSlot + "," + ringIdx + "," + ts84 + "," +
+                        vendor + "," + ts130 + "," + mono + "," + boot + "," + (boot - mono));
                     previous[k] = chosen;
                 }
                 Thread.sleep(10);
