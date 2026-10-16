@@ -434,3 +434,34 @@ Channel 7 is represented by only **60** total selected points in this geometric 
 Two distinct gates remain: (1) absolute optical exposure/HMD pose timebase, and (2) blind, independent multi-camera source association with balanced channels plus a whole-recording test and leave-one-station-out. Both are currently BLOCKED. Do not treat 'zero off-interval hits' in a seed-centered search as self-contained evidence of station-center calibration.
 
 The split audit requires `numpy` (already used by the existing offline solver), does not accept live driver calibration, and always emits `live_correction_allowed=false`. Four synthetic regression tests were added at `pico/tests/test_solver_holdout_audit.py`. It never writes headset-specific data to GitHub.
+
+
+### P2 deterministic validation-fold preparation — 2026-10-16
+
+Following the split audit, \`pico/tools/plan_solver_folds.py\` prepares PRIVATE,
+reproducible diagnostic train/test index arrays from an existing
+\`correspondences.npz\` (\`session\`, \`ch\`, \`t\` arrays). It creates one
+leave-entire-session-out fold per recorded session and four
+leave-entire-station-out folds (Lighthouse channels 1, 7, 10, 13).
+
+Run, from the repository root, with the **private** observation file:
+
+    python pico/tools/plan_solver_folds.py <private-correspondences.npz> --report <private-fold-report.json> --folds <private-fold-indices.npz>
+    python -m unittest pico.tests.test_solver_folds -v
+
+The count-only JSON report flags missing channel coverage; the optional NPZ
+contains only index arrays. No station coordinates, camera intrinsics, images,
+poses, or installed live calibration are generated. The source archive is not
+modified. Synthetic validation checks enforce disjoint, exhaustive partitions
+and all live-correction flags remaining FALSE.
+
+**Critical limitation:** these folds are generated from observations already
+selected around fitted 3D seed landmarks. They do **not** prove blind source
+identity or independent geometry. A valid next test must refit solely on
+training captures, blindly detect sources afresh in the held-out raw capture,
+apply OFF/ON negative controls, and evaluate station-center geometry, timing,
+per-channel pixel residuals and metric accuracy. The existing solver is NOT
+authorized to consume these arrays as evidence of a passing calibration.
+No on-device corrections may be enabled. Keep \`OBSERVE ONLY\`,
+\`mapping_verified=false\`, \`pose_verified=false\`, and the original
+PFR1/F timebase unchanged.
