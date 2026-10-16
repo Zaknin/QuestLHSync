@@ -125,12 +125,26 @@ def main():
     parser.add_argument("--csv", type=Path, required=True)
     parser.add_argument("--after", type=Path, required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--summary", action="store_true")
     args = parser.parse_args()
     result = inspect_slot130(args.before, args.csv, args.after)
     output = json.dumps(result, indent=2) + "\n"
     if args.output:
         args.output.write_text(output, encoding="utf-8")
-    print(output, end="")
+    if args.summary:
+        print(f"status={result['status']} frames={result['input_frames']} live_correction=false")
+        for cam in CAMERAS:
+            row = result["per_camera"][str(cam)]
+            delta = row["slot130_minus_vendor_if_ns"]
+            med = "N/A" if delta is None else f"{delta['median_ms']:+.6f}"
+            print(f"C{cam} nonzero={row['slot130_nonzero']}/{row['frames']} "
+                  f"equal_vendor={row['slot130_equal_vendor']} "
+                  f"qtimer_epoch_near={row['slot130_within_1s_of_vendor_qtimer_epoch']} "
+                  f"boottime_epoch_near={row['slot130_within_1s_of_producer_boottime_epoch']} "
+                  f"slot130_minus_vendor_median_if_ns_ms={med}")
+        print("Hypothetical only: physical-exposure and timing correction gates remain CLOSED.")
+    else:
+        print(output, end="")
 
 
 if __name__ == "__main__":
