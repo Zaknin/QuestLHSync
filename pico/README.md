@@ -1238,3 +1238,36 @@ not been run on the owner's Windows machine yet. Do not change
 `pico/src/lhsight_pico.c` to use raw, shadow, or corrected vendor time
 or set `exact_time_=true` until physical exposure-source proof and
 independent SteamVR-pose timestamp alignment are established.
+
+
+### P2 shadow replay hotfix — 2026-10-16
+
+The owner's first `replay_shadow_k0_time.ps1` run exposed a
+**code-only key mismatch** in the new offline analyzer: the established
+`parse_pvr_snapshot()` returns `monotime_ns`, whereas shadow
+projection looked up `monotonic_ns`. Six original QTIMER tests
+passed; five of seven new shadow tests failed with `KeyError`,
+and the PowerShell runner correctly stopped **before producing any
+shadow output**. This is not evidence against the physical QTIMER
+hypothesis or an HMD failure.
+
+Fixes:
+1. Use the canonical PVR dictionary key `monotime_ns` consistently
+   in `pico/tools/audit_shadow_k0_time.py`.
+2. Launch the offline tool via
+   `python -m pico.tools.audit_shadow_k0_time` from the checkout
+   root to ensure absolute `pico.tools.*` imports resolve
+   portably under PowerShell 7.
+3. Add a regression test of the upstream snapshot parser's key;
+   expected offline suite is **14** tests (6 existing + 8 new).
+
+The fixed suite still needs to be executed on the owner's Windows
+checkout. No K0 timestamps, decoder formats, hardware readers,
+installer modules, driver timing, or live correction flags were
+modified.
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\replay_shadow_k0_time.ps1
+```
