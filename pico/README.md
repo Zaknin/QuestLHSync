@@ -1322,3 +1322,30 @@ retained at
 `pico/build/qtimer-p2-private-20261016-204644/shadow.json`.
 Next evidence should be native timestamp producer provenance and
 physical camera→K0 mapping, not another synthetic clock fit.
+
+
+### Next native source proof step — offline only, after 1,204-frame shadow pass
+
+`pico/tools/trace_k0_frame_provenance.ps1` has been added to
+inspect the previously saved, SHA-256 pinned ELF binaries without
+connecting to the Pico headset. It focuses on four bounded ARM64
+ranges: (1) AImage image stamp and separate systemTime(4) setup;
+(2) `CameraReader` outlined helper at 0x3b4c0 that receives image
+timestamp `x5` and BOOTTIME `x6`; (3) QuickCamera metadata dequeue;
+(4) K0 DataBuffer copying/unlocking. The script stops if hashes
+differ, retains all extracted disassembly in the existing
+`p2-static-clock-private-*` local folder, and prints bounded
+text excerpts. Do not upload binaries or calibration files.
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_frame_provenance.ps1
+```
+
+Success will help identify where the two timestamps flow after
+`CameraReader::OnImageCallback`. It is **not** direct evidence of
+the actual QTIMER-origin in the camera HAL. That requires further
+static provenance or an independent physical event-time check.
+The script has not been executed against the owner's saved ELF files
+yet; the existing read-only K0/SteamVR safety gates remain unchanged.
