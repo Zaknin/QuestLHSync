@@ -1349,3 +1349,75 @@ the actual QTIMER-origin in the camera HAL. That requires further
 static provenance or an independent physical event-time check.
 The script has not been executed against the owner's saved ELF files
 yet; the existing read-only K0/SteamVR safety gates remain unchanged.
+
+
+### P2 timestamp provenance: corrected interpretation of owner's native disassembly — 2026-10-16
+
+The owner ran `trace_k0_frame_provenance.ps1` on the same two
+SHA-pinned Pico OS 5.11.2 ELF libraries. All four original bounded
+extractions succeeded. **Two earlier analyst assumptions were wrong:**
+
+1. `CameraReader::OnImageCallback` calls `AImage_getTimestamp`
+   at `0x3a8bc`, retrieves that value in `x22`, then calls
+   `systemTime(4)` (BOOTTIME) at `0x3a8d8`. Registers `x5=x22`
+   and `x6=BOOTTIME` are forwarded into the call at `0x3a8f4`.
+   **That call targets `0x3b4c0`, a compiler-outlined
+   `snprintf`/varargs formatting helper calling
+   `__vsnprintf_chk@plt` at `0x3b540`**, *not* a timestamp
+   conversion, frame dispatcher, or camera synchronization routine.
+   The two values are apparently passed for diagnostic formatting;
+   the surrounding format string and subsequent call sites still
+   require inspection. A following `ldr x5, [sp,#8]` at `0x3a934`
+   reuses the raw image timestamp in a **different branch**, which
+   is an important future lead.
+2. The observed direct metadata copies from `pvr_frame_item_t+0x18`
+   to buffer `+0x11`, and `pvr_frame_item_t+0x20` to buffer
+   `+0x19`, appear at `0xacd6c–0xacd78` in
+   `CameraManager::writeToExpSm`. That is the **separate exposure
+   shared memory** path. It does *not* prove which offsets are
+   actually written in the main K0 image frame ring. The main image
+   ring path is `CameraManager::writeToSm` at `0xab634`
+   and has to be inspected independently.
+
+The proprietary QuickCamera path **is also distinct**:
+`PvrCameraFrame::processCameraFrame` at `0x66634` calls
+`QuickCameraClient::DeQueueFrame` with an output `FrameMetaDate*`
+at `sp+0x10`. Its metadata fields are copied into a local frame
+descriptor before virtual callback invocation. This route may be
+different from Android `AImageReader`. No evidence in the
+narrow extract yet establishes **which producer branch** supplied
+the K0 `slot+114/slot+122` timestamps. The observed 1204-frame
+QTIMER shadow consistency is valid empirical evidence, but cannot
+be promoted into direct source-level provenance.
+
+The hash-pinned, **offline-only**
+`pico/tools/trace_k0_frame_provenance.ps1` has been corrected to
+label the `0x3b4c0` helper as varargs formatting rather than time
+conversion, distinguish `writeToExpSm` from the real `writeToSm`,
+and include complete bounded disassembly of the following three
+high-value functions:
+
+- `CameraReader::OnImageCallback` after the diagnostic formatting
+  (`0x3a928–0x3aa98`), for the raw timestamp's actual dispatch.
+- `CameraManager::onFrameAvailable`
+  (`0xaa8f4–0xaac50`), for frame metadata routing.
+- `CameraManager::writeToSm` (`0xab634–0xab988`), for the
+  actual image ring record construction.
+
+It also covers `PvrImageReaderListener::processFrame`, QuickCamera
+metadata assembly and the `0x254d7` diagnostic format string.
+These are narrow static offsets for the verified exact firmware SHA,
+NOT a portable ABI. The script does no ADB/device operations.
+
+Next local command (requires no headset):
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_frame_provenance.ps1
+```
+
+The revised extraction has not yet been run on the owner's PC.
+Until the two producer branches and their frame item metadata
+are unambiguously traced, do NOT mark K0 timestamp as verified
+QTIMER or switch LHSync to `exact_time`. Continue OBSERVE ONLY.
