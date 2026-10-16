@@ -1644,3 +1644,33 @@ locally. Five new synthetic tests accompany it; they are
 **not yet executed** on the owner's Windows machine.
 All P2 safety gates remain OBSERVE ONLY;
 `exact_time=false`, no live driver clock conversion.
+
+
+### P2 observation: invariant K0 +130 delta and resolved listener vtable — 2026-10-16
+
+The owner's next offline check passed 5/5 new tests. All
+301 completed frames on each C0, C3, C4 and C5 (1,204 in total)
+had `slot122 - slot130 = 225997 ns` **exactly**,
+with one unique value and zero adjacent changes per camera.
+This was constant throughout the recorded 12 seconds;
+do NOT treat it as a general fixed exposure correction
+across changing camera conditions, firmware and devices.
+The native formula still includes per-camera parameters
+and a frame-specific metric.
+
+The exact `CameraManager::CameraImageListener` ELF
+vtable relocation at `0x15e6b0` resolves to
+`onFrameAvailable(pvr_frame_item_t*)` at `0xabbfc`.
+It is consistent with the QuickCamera virtual callback
+offset `+0x10` after `PvrCameraDevice::setPvrImageListener`
+stores an image-listener shared pointer at device+0x30.
+The actual producer/listener instance for observed K0
+cameras is **not yet proven**.
+
+Research detail:
+[`P2-K0-SourceAndSlot130-20261016.md`](research/P2-K0-SourceAndSlot130-20261016.md).
+For the current static disassembly and saved CSV audit,
+Pico 4 Pro may safely remain **powered off** while the
+owner uses Pimax Crystal. No ADB/SLAM/live HMD access
+is needed until physical-event and PC-pose tests resume.
+OBSERVE ONLY; `exact_time=false`; no driver changes.
