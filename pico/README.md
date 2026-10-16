@@ -1528,3 +1528,56 @@ consistency strong, native QuickCamera duplicate timestamp
 construction now supported by static code, but K0 callback
 producer origin and true optical exposure semantics still
 unverified; do not enable `exact_time` or Lighthouse correction.
+
+
+### P2 offline K0 third timestamp and virtual-callback audit — 2026-10-16
+
+Owner completed the targeted static producer analysis. All five
+`elf_cstring_at_va` synthetic tests **passed**. It verified the
+QuickCamera `FrameMetaDate` first 64-bit word is duplicated at
+`pvr_frame_item_t+0x18` and `+0x20`, with a subsequent virtual
+callback at `0x666e0` carrying the assembled frame descriptor.
+The main K0 `writeToSm` copies those struct offsets into
+`slot+114/slot+122`. However, the **actual virtual callback
+callee and active K0 producer** have not yet been identified
+independently, so this remains a *conditional* complete path.
+
+New important lead: `CameraManager::onFrameAvailable`
+**calculates** `pvr_frame_item_t+0x28` at `0xaaeac`,
+and the image writer copies that field to
+`K0 slot+130`. The formula contains an arithmetic-shifted
+half of a product, which might relate to an exposure or sensor
+timing adjustment. **We have not established source operands,
+units, clock epoch, or physical exposure semantics.**
+The existing private 1,204-frame `--clock-scan` CSV already
+contains `ring_ts130_ns`; a new capture is unnecessary.
+
+A focused, fail-closed **offline comparison** and five synthetic
+test cases are in `pico/tools/audit_k0_slot130.py` and
+`pico/tests/test_k0_slot130.py`. The runner
+`pico/tools/review_k0_slot130.ps1` reuses bracketing PVR
+clock snapshots and K0 CSV from the earlier successful sample,
+runs the previous 14 plus new 5 timing regression tests,
+then reports +130 values near candidate QTIMER and/or BOOTTIME
+epochs. Any interpretation is hypothetical and does not
+authorize `exact_time` or live Lighthouse corrections.
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\review_k0_slot130.ps1
+```
+
+Additional separate, optional offline auditor
+`pico/tools/audit_k0_callback_dependencies.ps1` identifies
+DT_NEEDED and dynamic symbols for the two already captured
+vendor PVR ELFs, plus bounded ARM64 virtual callback and
+alternative `AImageReader` paths. This should narrow the
+QuickCamera library/provider origin for later static inspection;
+it does not use ADB or execute code on the headset.
+
+Source-level evidence, known limitations, commands, and gates:
+[`pico/research/P2-K0-SourceAndSlot130-20261016.md`](research/P2-K0-SourceAndSlot130-20261016.md).
+All newly added tests/tools are **not yet run** on the owner's
+Windows checkout. Existing PFR1, native reader, camera metadata,
+driver optics, and live tracking code remain unchanged.
