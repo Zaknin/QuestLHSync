@@ -131,3 +131,45 @@ of frame metric `+0x14`, and the QuickCamera callback vtable.
 
 All data stays local and all safety gates remain BLOCKED for
 live `exact_time` or SteamVR pose compensation.
+
+
+## P2 next static/quantitative step (2026-10-16)
+
+A median difference of `-225997 ns` for all four K0 streams is
+compatible with a near-constant configuration/exposure adjustment,
+but the median alone cannot distinguish a fixed correction from
+a frame-varying calculation. The exact source equation loads
+`E` from `frame_item+0x14`, `B` from the per-camera
+`CameraManager+0x320*id+0x330`, and `A` from
+`CameraManager+0x320*id+0x338`. Their actual units and source
+remain unknown.
+
+Two **offline** tools have been added:
+
+- `pico/tools/audit_k0_slot130_variation.py` computes per-frame
+  `vendor_ns - ring_ts130_ns` distributions for the existing
+  private CSV, including unique values, adjacent changes, min,
+  median and max, and most common exact nanosecond differences;
+  distinguishes dynamic correction from a frozen parameter.
+  Five synthetic regression cases were added in
+  `pico/tests/test_k0_slot130_variation.py`.
+- `pico/tools/trace_k0_slot130_parameters.ps1` runs the five
+  new tests and actual CSV distribution, then performs
+  SHA-256-pinned offline disassembly of
+  `CameraManager::collectCameraInfo`,
+  `PvrCameraDevice::setPvrImageListener`, and
+  `CameraImageListener` ELF relocation candidates to
+  investigate parameter and callback ownership. All full
+  traces are saved in the existing private static evidence folder;
+  only short excerpts are printed.
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_slot130_parameters.ps1
+```
+
+The new tools and synthetic tests were checked in and read back
+but have NOT yet been executed on the owner's Windows checkout.
+No headset access, new camera data capture, exposure manipulation,
+or live `exact_time` activation is needed.
