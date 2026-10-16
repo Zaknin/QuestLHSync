@@ -65,7 +65,7 @@ $source | Set-Content -LiteralPath (Join-Path $dir 'quickcamera-virtual-callback
 $source | Select-Object -Skip 3
 
 Write-Host '=== CameraManager pre-write metadata and timing adjustment ==='
-$writer = @(Run-Native $objdump @('-d', '--demangle', '--no-show-raw-insn', '--start-address=0xaae70', '--stop-address=0xaaf08', $service))
+$writer = @(Run-Native $objdump @('-d', '--demangle', '--no-show-raw-insn', '--start-address=0xaae54', '--stop-address=0xaaf08', $service))
 $writer | Set-Content -LiteralPath (Join-Path $dir 'service-metadata-to-k0-writer.txt') -Encoding utf8
 $writer | Select-Object -Skip 3
 
