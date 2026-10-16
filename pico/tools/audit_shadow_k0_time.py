@@ -90,10 +90,10 @@ def shadow(before_path, csv_path, after_path):
     if end <= start:
         raise ValueError("PVR timestamps are out of order")
 
-    q_mono0 = before["qtimer_ns"] - before["monotonic_ns"]
-    q_mono1 = after["qtimer_ns"] - after["monotonic_ns"]
-    b_mono0 = before["boottime_ns"] - before["monotonic_ns"]
-    b_mono1 = after["boottime_ns"] - after["monotonic_ns"]
+    q_mono0 = before["qtimer_ns"] - before["monotime_ns"]
+    q_mono1 = after["qtimer_ns"] - after["monotime_ns"]
+    b_mono0 = before["boottime_ns"] - before["monotime_ns"]
+    b_mono1 = after["boottime_ns"] - after["monotime_ns"]
     offset_drift = q_mono1 - q_mono0
     per_camera = {}
     all_bounds = []
