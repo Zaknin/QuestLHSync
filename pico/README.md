@@ -415,3 +415,22 @@ Fundamental ambiguity: let image timestamp = physical exposure + unknown sensor 
 Safety contract: independent of computed ppm, the tool returns `camera_clock_epoch_verified=false`, `physical_exposure_time_verified=false`, `hmd_pose_timebase_verified=false`, `live_lighthouse_correction_allowed=false`. It explicitly validates monotonic sequences and cross-camera coverage, with 5 offline synthetic regression tests (`python -m unittest pico.tests.test_paired_clocks -v`) covering zero rate skew, known +12ppm skew, missing camera, duplicate sequence and image-timestamp jump. No Pico Java streaming changes or SteamVR corrections were made.
 
 Next research stage: obtain an *independent* event/epoch anchor for `AImage_getTimestamp` and for HMD pose prediction timestamps; perform blind station-point association without using the landmark that seeds its own validation. The station-withheld geometric error remains tens of pixels for channels 7/13: do not enable `OBSERVE ONLY` overrides.
+
+### P2 verification strength audit: solver split — 2026-10-16
+
+A separate **PRIVATE** audit reloaded previously saved `correspondences.npz` and `solver_internal.npz` (no refit, no direct export of poses/calibration). The new reusable `pico/tools/audit_solver_holdout.py <private-correspondences.npz> <private-solver_internal.npz>` prints aggregate train/test membership, session overlap and 10-second block overlap. It is a sanity check of the **experimental design**, not source classification or metric accuracy.
+
+Observed old solver split: **1,357 train / 751 held out**, zero exact index leakage, **zero shared ten-second blocks**, but both `B_control` and `C_target` appear in BOTH train and held-out observations: the split is **NOT a whole-session holdout**. The previous reported ~1.24px fit therefore cannot be called independent *session-separated* accuracy.
+
+| Lighthouse channel | Train selected 2D observations | Held-out selected observations |
+| --- | ---: | ---: |
+| 1 | 76 | 40 |
+| 7 | 39 | 21 |
+| 10 | 477 | 272 |
+| 13 | 765 | 418 |
+
+Channel 7 is represented by only **60** total selected points in this geometric solver, while channel 13 has **1,183** (≈19.7 times more). The pooled pixel-error statistic will be dominated by channels 10 and 13. In addition, associations were selected *using prior projected seed landmarks*, so withholding 10-second blocks does not make source identification blind; the same identity prior helped select both training and test targets. This is a model-selection limitation, not necessarily code leakage.
+
+Two distinct gates remain: (1) absolute optical exposure/HMD pose timebase, and (2) blind, independent multi-camera source association with balanced channels plus a whole-recording test and leave-one-station-out. Both are currently BLOCKED. Do not treat 'zero off-interval hits' in a seed-centered search as self-contained evidence of station-center calibration.
+
+The split audit requires `numpy` (already used by the existing offline solver), does not accept live driver calibration, and always emits `live_correction_allowed=false`. Four synthetic regression tests were added at `pico/tests/test_solver_holdout_audit.py`. It never writes headset-specific data to GitHub.
