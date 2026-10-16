@@ -1786,3 +1786,53 @@ only in the existing private offline firmware folder.
 No Pico, ADB, camera capture, SteamVR or driver changes.
 Source/ABI proof still differs from runtime active K0
 producer ownership, and `exact_time=false` is unchanged.
+
+
+### P2 proven callback-forwarder / ELF switch table follow-up — 2026-10-17
+
+After pulling `1330c6f`, owner successfully ran
+`trace_k0_listener_wiring_parameters.ps1`; **7/7**
+synthetic tests and hash-pinned static disassembly
+completed. It established `CameraManager::CameraImageListener::onFrameAvailable`
+at `0xabbfc` forwards each frame directly to
+`CameraManager::onFrameAvailable` and contains explicit
+routing code for camera ids `0,3,4,5`.
+A compact four-byte switch table at ELF VA
+`0x73a10` routes native descriptor byte `+0`
+for indices `0..3`; its actual four bytes still
+need to be read. `PvrQuickCamera` delegates
+listener installation to `PvrCameraDevice`,
+where the shared listener is stored at
+`device+0x30`. Actual **runtime K0 producer binding**
+is still unverified.
+
+Also corrected an important generic-offset fallacy:
+`CameraManager::setCameraParameters` accesses
+global `0x163000 + 0x330/+0x338` addresses and
+those must not be identified with indexed
+`CameraInfo+0x330/+0x338` parameters without
+base-register proof. The constructor actually
+has `x23=x28-0x300` around its store site, so
+`[x23+0x330/338]` are locally
+`[x28+0x30/38]`; the `x28` owner and
+indexing remain under investigation.
+
+New offline tools
+`pico/tools/audit_k0_listener_table.py` and
+`pico/tools/trace_k0_constructor_dispatch.ps1`
+decode the bounded jump table and collect
+constructor/base-register evidence from the
+saved SHA-256-pinned service ELF; six new
+synthetic tests were added.
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_constructor_dispatch.ps1
+```
+
+The new tooling has not run on owner's Windows yet.
+It is read-only, no ADB, new captures, tracking,
+live camera correction or SteamVR interaction.
+Full proof tracking in
+[`P2-K0-SourceAndSlot130-20261016.md`](research/P2-K0-SourceAndSlot130-20261016.md).
