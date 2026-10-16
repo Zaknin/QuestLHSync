@@ -7,7 +7,7 @@ from pathlib import Path
 from pico.tools.analyze_vendor_clock import analyze
 
 HEADER = ["sample", "cam", "seq", "newest_seq", "slot", "ring_index",
-          "ring_ts84_ns", "vendor_ns", "ring_ts130_ns", "mono_ns", "boot_ns", "boot_minus_mono_ns"]
+          "ring_ts84_ns", "image_ts114_ns", "vendor_ns", "ring_ts130_ns", "mono_ns", "boot_ns", "boot_minus_mono_ns"]
 
 
 class VendorClockTest(unittest.TestCase):
@@ -34,7 +34,7 @@ class VendorClockTest(unittest.TestCase):
                     vendor -= 100_000_000
                 rows.append(dict(sample=i, cam=cam, seq=1+2*i,
                                  newest_seq=3+2*i, slot=i%5, ring_index=(i+1)%5,
-                                 ring_ts84_ns=ts84, vendor_ns=vendor, ring_ts130_ns=ts130,
+                                 ring_ts84_ns=ts84, image_ts114_ns=vendor, vendor_ns=vendor, ring_ts130_ns=ts130,
                                  mono_ns=mono, boot_ns=boot,
                                  boot_minus_mono_ns=boot-mono))
         return rows
@@ -49,6 +49,7 @@ class VendorClockTest(unittest.TestCase):
             self.assertAlmostEqual(camera["vendor_minus_boot_ms_median"], 4660)
             self.assertAlmostEqual(camera["ts84_minus_boot_ms_median"], -76)
             self.assertAlmostEqual(camera["ts122_minus_ts84_ms_median"], 4736)
+            self.assertEqual(camera["image_ts114_equals_ts122_fraction"], 1)
             self.assertAlmostEqual(camera["ts122_minus_ts130_ms_median"], 0.230)
             self.assertAlmostEqual(camera["boot_minus_mono_ms_median"], 138000)
             self.assertAlmostEqual(camera["vendor_vs_mono_rate_difference_ppm"], 0, places=4)
