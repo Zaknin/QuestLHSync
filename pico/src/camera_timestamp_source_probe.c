@@ -51,7 +51,8 @@ int main(void) {
         return 3;
     }
 
-    printf("camera2_exposed_count=%d\n", ids->numCameras);
+    const int camera_count = ids->numCameras;
+    printf("camera2_exposed_count=%d\n", camera_count);
     int failures = 0;
     for (int i = 0; i < ids->numCameras; ++i) {
         const char *id = ids->cameraIds[i];
@@ -81,7 +82,7 @@ int main(void) {
     }
     ACameraManager_deleteCameraIdList(ids);
     ACameraManager_delete(manager);
-    printf("result=%s\n", ids == NULL ? "ERROR" :
+    printf("result=%s\n", camera_count == 0 ? "NO_PUBLIC_CAMERAS" :
         (failures ? "PARTIAL_STATIC_METADATA" : "STATIC_METADATA_ONLY"));
-    return failures ? 4 : 0;
+    return camera_count == 0 ? 5 : (failures ? 4 : 0);
 }
