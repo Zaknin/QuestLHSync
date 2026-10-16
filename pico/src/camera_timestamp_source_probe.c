@@ -59,7 +59,7 @@ static void print_static_fingerprint(const char *id, const ACameraMetadata *meta
         for (uint32_t j = 0; j + 3 < entry.count; j += 4) {
             /* Format, width, height, direction; output direction is zero. */
             if (entry.data.i32[j + 1] == 640 && entry.data.i32[j + 2] == 480 &&
-                entry.data.i32[j + 3] == 0) {
+                entry.data.i32[j + 3] == ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS_OUTPUT) {
                 output_640x480 = 1;
                 break;
             }
