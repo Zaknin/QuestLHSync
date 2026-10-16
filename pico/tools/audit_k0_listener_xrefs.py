@@ -161,14 +161,14 @@ def analyze(camera, service, objdump, readelf):
             lambda s, fn: bool(CONFIG_STORE.match(s)),
             max_matches=30, before=12, after=5,
         )
-        output.append(format_hits(label + " STR/STUR/STP to per-camera +0x330/+0x338", writes))
+        output.append(format_hits(label + " raw +0x330/+0x338 stores [BASE TYPE UNVERIFIED]", writes))
         output.append("")
         config_refs = find_matches(
             lines, owners,
             lambda s, fn: bool(INSN.match(s) and CONFIG_REF.search(s)),
             max_matches=30, before=7, after=3,
         )
-        output.append(format_hits(label + " ALL +0x330/+0x338 accesses", config_refs))
+        output.append(format_hits(label + " raw +0x330/+0x338 refs [BASE TYPE UNVERIFIED]", config_refs))
         output.append("")
     output.extend([
         "NEXT_GATES:",
