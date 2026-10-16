@@ -710,3 +710,64 @@ if (-not $head -or -not $tail) {
 Stay OBSERVE ONLY. Even valid public REALTIME metadata for the four
 640x481 EXTERNAL cameras cannot be transferred to internal K0 timestamps
 until the vendor path and timestamp arithmetic are independently verified.
+
+
+### P2 HAL legacy/6 static classification — real device, 2026-10-16
+
+The owner's follow-up **read-only** `dumpsys -t 10 media.camera` static section for
+`device@3.5/legacy/6` establishes:
+
+- `android.request.availableCapabilities` contains
+  **`LOGICAL_MULTI_CAMERA`** together with BACKWARD_COMPATIBLE,
+  RAW, YUV_REPROCESSING, PRIVATE_REPROCESSING, READ_SENSOR_SETTINGS,
+  MANUAL_SENSOR, BURST_CAPTURE, MANUAL_POST_PROCESSING.
+- `android.lens.facing=EXTERNAL`,
+  `android.sensor.orientation=270`,
+  `android.sensor.info.pixelArraySize=[640, 481]`,
+  `android.sensor.info.timestampSource=REALTIME`,
+  `android.info.supportedHardwareLevel=FULL`.
+- `Resource cost: 100`; HAL `Conflicting devices: 0`.
+  API1 display label also reads "Facing: Front", showing why Camera1
+  descriptive labels should not override Camera2 metadata.
+
+Android's definition of `LOGICAL_MULTI_CAMERA` is a logical camera
+backed by two or more physical cameras, not a proof that device 6 is
+a *seventh* standalone sensor. The matching 640x481 characteristics
+make it a candidate for grouping the physical tracking cameras, but
+**membership and exact public-ID ↔ K0-ID routing are still unknown**.
+The reported resource conflict with device 0 is not a physical-ID map.
+
+Android's standard static metadata
+`android.logicalMultiCamera.physicalIds` is the next discriminator.
+The NDK metadata tag `ACAMERA_LOGICAL_MULTI_CAMERA_PHYSICAL_IDS`
+contains a NUL-delimited byte array of physical camera ID strings,
+not numeric camera indices. Physical camera IDs can be hidden from
+ordinary CameraManager ID listings on Android 10. Official references:
+https://source.android.com/docs/core/camera/multi-camera and
+https://developer.android.com/ndk/reference/group/camera
+
+**Safe one-shot inspection; never opens the camera**. Filter *only*
+the HAL 6 static section, including 2–4 lines of context around keys.
+Do not post a full metadata dump with calibration/extrinsics:
+
+```powershell
+$adbTarget = '192.168.23.12:5555'
+$lines = @(adb -s $adbTarget shell dumpsys -t 10 media.camera)
+if ($LASTEXITCODE -ne 0) { throw 'camera dumpsys failed' }
+$start = $lines | Select-String 'Camera HAL device device@3\.5/legacy/6 .*static information' | Select-Object -First 1
+$end = $lines | Select-String 'Camera HAL device device@3\.5/legacy/6 .*dumpState' | Select-Object -First 1
+if (-not $start -or -not $end -or $end.LineNumber -le $start.LineNumber) {
+    'HAL 6 static section not present / dump truncated'
+} else {
+    $lines[($start.LineNumber - 1)..($end.LineNumber - 2)] |
+      Select-String -Pattern 'android\.logicalMultiCamera\.physicalIds|android\.logicalMultiCamera\.sensorSyncType|android\.request\.availableCapabilities' -Context 0,3
+}
+```
+
+**Interpretation gate:** HAL 6 physicalIds may establish *public*
+parent↔physical identifiers. It does not prove which internal
+`pvrtracking` K0 `C0/C3/C4/C5` index corresponds to each one,
+and CALIBRATED sensor synchronization (if reported) would address
+*relative* exposure alignment, NOT the ~4.736s absolute K0 epoch
+disagreement with BOOTTIME. Keep all tracking and timebase safety
+gates blocked; no live corrections.
