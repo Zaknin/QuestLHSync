@@ -1271,3 +1271,54 @@ cd C:\Dev\PicoLHSync
 git pull --ff-only
 pwsh -NoProfile -File .\pico\tools\replay_shadow_k0_time.ps1
 ```
+
+
+
+### P2 shadow replay: owner real 1,204-frame PASS — 2026-10-16
+
+The owner completed `pwsh -NoProfile -File pico/tools/replay_shadow_k0_time.ps1`
+after the `monotime_ns` compatibility fix. **14/14** synthetic
+unit tests passed. Private `shadow.json` was produced locally.
+All **1204/1204** existing completed K0 frames fell within the
+bracketing PVR clock sample epoch, with four camera runs of 301 frames
+each. The offline result:
+
+```text
+status=QTIMER_SHADOW_PLAUSIBLE_UNVERIFIED
+PVR qtimer-minus-monotonic drift over the bracket: -0.000100 ms
+sensor exposure timestamp verified=false
+live Lighthouse correction allowed=false
+```
+
+| K0 | Candidate producer-write lag median / p90 / max (ms) | Candidate Java reader age median / p90 / max (ms) | Java vs PVR BOOTTIME−MONO residual max (ms) |
+|---|---|---|---|
+| C0 | 9.823055 / 9.879567 / 10.348226 | 55.108239 / 58.971543 / 86.868722 | 0.011014 |
+| C3 | 10.063757 / 10.209562 / 10.682601 | 55.486178 / 59.363026 / 86.994712 | 0.010309 |
+| C4 | 9.960923 / 10.104987 / 10.831299 | 55.585994 / 59.554484 / 87.055232 | 0.000597 |
+| C5 | 10.234538 / 10.374796 / 11.181143 | 55.728870 / 59.725968 / 87.111899 | 0.000676 |
+
+These model outcomes **are consistent** with a ~10 ms image
+timestamp-to-producer-ring-write interval followed by a roughly
+40–45 ms delay before this observer reads the preceding completed
+frame. The `--clock-scan` intentionally skips the newest ring slot,
+so **55 ms is not proof of camera exposure latency nor inherent
+SteamVR end-to-end latency**. At the observed 25 fps, one K0
+frame period is ~40 ms. All of these estimates are conditional
+on the QTIMER clock-domain hypothesis.
+
+Important distinguishers: (a) *clock-domain conversion precision*
+has strong numerical evidence, (b) *physical exposure timestamp source*
+still lacks native HAL-level proof, and (c) *end-to-end pose correction
+accuracy/latency* also depends on camera-to-HMD mapping, optical
+calibration, scene detection and PC pose clock. It is too early
+to claim achieved Quest Pro superiority. The original Quest Pro
+LHSync F timestamps are detection/poll times; Pico may provide
+more accurate frame chronology, but not necessarily faster
+frame delivery.
+
+No `F` stream, `pico_lhsight`, `exact_time_`, PICO
+calibration or SteamVR driver has been modified. Private evidence
+retained at
+`pico/build/qtimer-p2-private-20261016-204644/shadow.json`.
+Next evidence should be native timestamp producer provenance and
+physical camera→K0 mapping, not another synthetic clock fit.
