@@ -46,7 +46,7 @@ foreach ($elf in @($camera, $service)) {
     $lines | Set-Content -LiteralPath $outputFile -Encoding utf8
     $needed = @($lines | Select-String -Pattern '\(NEEDED\)|\(SONAME\)' | ForEach-Object { $_.Line.Trim() })
     Write-Host ("{0}:" -f (Split-Path $elf -Leaf))
-    if ($needed.Count) { $needed | Select-Object -First 45 } else { Write-Host '(No NEEDED symbols displayed)' }
+    if ($needed.Count) { $needed | Select-Object -First 30 } else { Write-Host '(No NEEDED symbols displayed)' }
 }
 
 Write-Host '=== Camera callback and cross-DSO symbol references ==='
@@ -55,8 +55,8 @@ foreach ($elf in @($camera, $service)) {
     $save = Join-Path $dir ((Split-Path $elf -Leaf) + '.symbols.txt')
     $lines | Set-Content -LiteralPath $save -Encoding utf8
     $hits = @($lines | Select-String -Pattern 'PvrCameraDeviceCallback|PvrCameraDevice::|CameraReader::|PvrImageReaderListener::|QuickCameraClient|CameraManager::collectCameraInfo|CameraManager::onFrameAvailable|vtable for pvr::' | ForEach-Object { $_.Line })
-    Write-Host ("{0}: {1} symbol matches (first 65 displayed)" -f (Split-Path $elf -Leaf), $hits.Count)
-    $hits | Select-Object -First 65
+    Write-Host ("{0}: {1} symbol matches (first 35 displayed)" -f (Split-Path $elf -Leaf), $hits.Count)
+    $hits | Select-Object -First 35
 }
 
 Write-Host '=== QuickCamera callback object + vtable call (source, NOT proof of callee) ==='
@@ -73,8 +73,8 @@ Write-Host '=== PvrImageReaderListener alternative path: relevant frame assembly
 $other = @(Run-Native $objdump @('-d', '--demangle', '--no-show-raw-insn', '--start-address=0x40140', '--stop-address=0x40930', $camera))
 $other | Set-Content -LiteralPath (Join-Path $dir 'alternative-imagereader-frame-construction.txt') -Encoding utf8
 $matches = @($other | Select-String -Pattern '\bbl\b|\bblr\b|\bstp\b.*\[sp,\s*#0x|\bstr\b.*\[sp,\s*#0x' | ForEach-Object { $_.Line })
-Write-Host ("Relevant alternative-path instructions: {0}; displaying first 75" -f $matches.Count)
-$matches | Select-Object -First 75
+Write-Host ("Relevant alternative-path instructions: {0}; displaying first 35" -f $matches.Count)
+$matches | Select-Object -First 35
 
 Write-Host 'RESULT: virtual callback target, QuickCamera time source and active K0 producer branch still require source-level proof.'
 Write-Host "Evidence retained locally: $dir"
