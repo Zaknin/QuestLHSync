@@ -58,6 +58,24 @@ class VendorClockTest(unittest.TestCase):
             self.assertAlmostEqual(camera["age_after_subtracting_one_period_ms"], 36, places=2)
             self.assertAlmostEqual(camera["boot_minus_mono_span_ms"], 0, places=4)
 
+    def test_legacy_clock_scan_without_image114(self):
+        # A real October 2026 scan predates the extra +114 diagnostic field.
+        rows = self.synthetic()
+        for row in rows:
+            del row["image_ts114_ns"]
+        old_header = [col for col in HEADER if col != "image_ts114_ns"]
+        report = analyze(self.save(rows, header=old_header))
+        self.assertEqual(report["status"], "DIAGNOSTIC_ONLY")
+        self.assertFalse(report["image_ts114_measured_in_this_csv"])
+        self.assertIsNone(report["per_camera"]["0"]["image_ts114_equals_ts122_fraction"])
+        self.assertFalse(report["sensor_exposure_clock_epoch_verified"])
+
+    def test_cross_camera_frame_coherence_and_boottime_gate(self):
+        report = analyze(self.save(self.synthetic()))
+        self.assertEqual(report["shared_four_camera_sequence_groups"], 450)
+        self.assertLessEqual(report["max_four_camera_vendor_spread_ns"], 5000)
+        self.assertFalse(report["per_camera"]["3"]["direct_vendor_as_boottime_exposure_allowed"])
+
     def test_detects_nonmonotonic_vendor(self):
         report = analyze(self.save(self.synthetic(corrupt=True)))
         self.assertEqual(report["status"], "INVALID_OR_INCOMPLETE")
