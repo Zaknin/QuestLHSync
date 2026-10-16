@@ -617,3 +617,37 @@ requires a separate observable clock/exposure anchor.
 No changes to normal Magisk/Java/PFR1/SteamVR streaming, no
 sensor timestamp corrections, and no relaxation of `OBSERVE ONLY`,
 `mapping_verified=false`, `pose_verified=false`.
+
+
+**Previously archived device-level process separation matters:** the owner's
+root ADB observations (2026-10-13) showed two vendor camera paths:
+`android.hardware.camera.provider@2.4-service_64` held
+`/dev/video0` (cam-req-mgr) and `/dev/video2` (cam_sync);
+`pico.camera.quickcamera.quickcameramodule@1.0-service_64` held
+`/dev/video1` (hub_cam-req-mgr) and `/dev/video3` (hub_cam_sync).
+The archived static disassembly of `libpvrtrackingcamera.so` also
+identifies a QuickCamera dequeue/return callback chain alongside the
+AImageReader chain. This is concrete evidence of *distinct access paths*
+rather than proof that ordinary public Camera2 metadata is the
+contract governing every internal PVR tracking image. The four matching
+640x481 public camera characteristics strengthen physical-device
+identification, while the QuickCamera separation is a plausible
+source of an altered image epoch. It is NOT yet a verified root cause.
+
+For the next device-side, non-streaming observation, use only the standard
+Android 10 camera service dump, print provider/device bindings rather
+than the complete sensitive metadata dump, and do not issue Camera2
+open/session or vendor-specific dump commands that could change state:
+
+```powershell
+$adbTarget = '192.168.23.12:5555'
+adb -s $adbTarget shell dumpsys -t 10 media.camera |
+  Select-String -Pattern 'Number of camera devices|Number of normal camera devices|Camera Provider HAL|Camera HAL device|Device [0-9]+ maps|Device [0-9]+ is|Active Camera Clients|device@|quickcamera' |
+  Select-Object -First 100
+```
+
+An empty or partial dump is an informative result and does not justify
+probing live camera ownership. The **next real timebase anchor** must
+come from independent firmware-clock mapping, synchronized optical/IMU
+timing, or verified Camera2-to-QuickCamera frame timestamp correspondence.
+No offset conversion is to be inferred just from six REALTIME enums.
