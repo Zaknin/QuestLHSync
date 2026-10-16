@@ -1,6 +1,7 @@
 # PICO P2: saved firmware call-chain provenance only. No ADB.
-# Inspect the x5=image stamp / x6=BOOTTIME callback arguments and
-# K0 ring writer; never touch a live process or clock.
+# Disambiguate camera image stamp, diagnostic formatting, the actual
+# CameraManager image-ring writer and *separate* exposure metadata ring.
+# No live processes, no ADB, no camera opens, no adjustments.
 [CmdletBinding()]
 param([string] $EvidenceDir = '')
 Set-StrictMode -Version Latest
@@ -35,11 +36,17 @@ $objdump = Join-Path $sdk 'ndk\27.2.12479018\toolchains\llvm\prebuilt\windows-x8
 if (-not (Test-Path -LiteralPath $objdump)) { throw "Missing NDK llvm-objdump: $objdump" }
 
 $sections = @(
-    @{ Name='01-CameraReader-ImageAndBoot-args'; Binary=$camera; From='0x3a898'; To='0x3a940' },
-    @{ Name='02-CameraReader-OutlinedHelper'; Binary=$camera; From='0x3b4c0'; To='0x3b700' },
-    @{ Name='03-QuickCamera-FrameMetadata'; Binary=$camera; From='0x66600'; To='0x666dc' },
-    @{ Name='04-K0-DataBuffer-Copy'; Binary=$service; From='0xaccd0'; To='0xace04' }
+    @{ Name='01-CameraReader-ImageTimestampAndBoottime'; Binary=$camera; From='0x3a898'; To='0x3a935' },
+    @{ Name='02-CameraReader-FrameTimestampDispatch'; Binary=$camera; From='0x3a928'; To='0x3aa98' },
+    @{ Name='03-PrintfFormatHelper-NOT-clock-conversion'; Binary=$camera; From='0x3b4c0'; To='0x3b568' },
+    @{ Name='04-CameraReader-ProcessFrame'; Binary=$camera; From='0x3be24'; To='0x3c210' },
+    @{ Name='05-PvrImageReaderListener-ProcessFrame'; Binary=$camera; From='0x3fca8'; To='0x40000' },
+    @{ Name='06-QuickCamera-Dequeue-And-Metadata'; Binary=$camera; From='0x66620'; To='0x66734' },
+    @{ Name='07-CameraManager-WriteToSm-MAIN-image-ring'; Binary=$service; From='0xab634'; To='0xab988' },
+    @{ Name='08-CameraManager-WriteToExpSm-SEPARATE-exposure-ring'; Binary=$service; From='0xacd04'; To='0xace04' }
 )
+# These are narrow deterministic extraction windows, not the full function
+# bodies. For multiple versions, SHA validation above MUST precede them.
 foreach ($part in $sections) {
     $args = @('-d','--no-show-raw-insn','--demangle',
               "--start-address=$($part.From)", "--stop-address=$($part.To)",
@@ -51,7 +58,16 @@ foreach ($part in $sections) {
     $destination = Join-Path $dir ($part.Name + '.txt')
     $result | Set-Content -LiteralPath $destination -Encoding utf8
     Write-Host ("=== {0} ===" -f $part.Name)
-    $result | Select-Object -Skip 3 -First 90
+    # Print key short blocks; full bounded disassembly is saved beside the ELFs.
+    $result | Select-Object -Skip 3 -First 70
 }
+# 0x3a8e4 references a string literal: dump the rodata backing the
+# vsnprintf formatting call, to avoid mistaking logging for synchronization.
+$rodata = @(& $objdump '-s' '--start-address=0x254c0' '--stop-address=0x25550' $camera)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect callback format string' }
+$rodata | Set-Content -LiteralPath (Join-Path $dir '09-Callback-Format-String.txt') -Encoding utf8
+Write-Host '=== 09-CameraReader-Callback-Format-String (rodata hex + ASCII) ==='
+$rodata | Select-Object -First 28
+
 Write-Host "COMPLETE: offline-only static evidence in $dir"
 Write-Host 'Do not post binaries or device factory calibration; text excerpts only.'
