@@ -1052,3 +1052,29 @@ QTIMER is a hypothesis **not** a ready-to-deploy timebase conversion.
 All observations remain private; report only the text manifest and
 selected call edges to continue the analysis. P2 OBSERVE ONLY gates stay
 enforced.
+
+
+### P2 external cross-check: Qualcomm QTIMER camera path and PICO internals — 2026-10-16
+
+A targeted research log is checked in at
+[`pico/research/P2-Qualcomm-QTIMER-Camera2-References-20261016.md`](research/P2-Qualcomm-QTIMER-Camera2-References-20261016.md).
+Its most relevant findings: open Qualcomm downstream camera kernel code
+reads 19.2 MHz CSID QTIMER start-of-frame registers and explicitly
+builds a BOOTTIME-domain camera timestamp; other Qualcomm HAL source
+has separate ISP BOOTTIME / display MONOTONIC offset handling, so a
+native camera clock conversion is established prior art. One Android
+developer reported a REALTIME image timestamp not matching
+CLOCK_BOOTTIME (no corresponding verified fix/magnitude). A separate
+PICO-specific reverse engineering project identifies CameraService
+ID 5 (400x1600) as the inward-facing eye/face sensor stream through
+OV680, matching the owner's Camera2 enumeration.
+
+**Nothing publicly found establishes the exact Pico 4 Pro +4.746s
+timestamp fault.** The new references prioritize investigating the
+saved firmware's `AImage_getTimestamp` and nearby `systemTime`
+call at 0x3a8bc / 0x3a8d8, and lower Camera HAL source semantics.
+The exported `SnsLowLatBridge::qtimer_get_time_ns` and
+`pxr::TimeSynchronization::sensorToSystemTime` are notable clock
+functions, but their relationship to K0 cameras is not established.
+No physical sensor exposure timing or PC pose clock is certified;
+no live offset changes permitted.
