@@ -351,3 +351,22 @@ On this headset, `BOOTTIME-MONOTONIC` offset measured **+9005.776s** (2h30m5.776
 `PicoFrameReader` now also supports an **opt-in runtime diagnostic**: when the Java process inherits `PICO_FRAME_CLOCK_DIAG=1`, it reports every 125 accepted frames per camera (~5s), on **stderr only**, `cam`, `seq`, verified `slot+84 producer_write_boot_ns`, same-frame `java_copy_mono_ns`, `java_copy_boot_ns`, and their positive elapsed `producer_to_copy_ms`. It double-checks `slot+84` during the torn-slot validity test. The normal binary `PFR1` header, payload, `F` timestamps, and 25Hz solver-facing stream are **unchanged when the flag is unset**. This diagnostic is distinct from `--clock-scan` (which does not copy pixel frames).
 
 The updated Java reader must be compiled/deployed for this new opt-in logging to work, and the complete live stream should be tested on the user's device. Do not turn on this debug flag in an always-on production module. It is designed to separate ring-buffer selection time from Java copy time when doing a future **short, controlled** validation. For now no production frame timestamp rewrite has been authorized.
+
+### P2 same-frame active pixel-copy validation — 2026-10-16
+
+The user compiled the new Java reader with `python pico/build_module.py --reader-only`, pushed **only the separate diagnostic JAR** and ran `PICO_FRAME_CLOCK_DIAG=1` through Android `timeout 22` with binary stdout redirected to `/dev/null`. It printed 4 diagnostic events per camera at sequence 3251, 3501, 3751, 4001 (250 sequence units = 125 physical frames ≈5 seconds). No exceptions were reported. This is a real read of full 640x480 K0 pixels, not the metadata-only probe.
+
+| Camera | Four same-frame producer-write → Java-copy values (ms) | Median (ms) |
+| --- | --- | ---: |
+| C0 | 43.3555, 44.7185, 41.1473, 42.9573 | 43.1564 |
+| C3 | 44.7232, 45.1911, 41.7046, 43.4392 | 44.0812 |
+| C4 | 45.2654, 45.6979, 41.9085, 43.9121 | 44.5887 |
+| C5 | 45.3081, 45.6933, 41.9602, 43.9499 | 44.6285 |
+
+Overall **16 paired measurements**, median **43.931ms**, mean **43.808ms**, range **41.147–45.698ms**. The earlier metadata-only 20s scan (501 frames/camera) found medians 45.21–45.84ms; the two independent acquisition paths are consistent. While the penultimate-safe-slot selection likely accounts for approximately one 40ms camera interval, the residual is **not a proven sensor exposure→write latency**, and reading the actively written `newest` slot to save time would risk torn images. Do NOT change the slot selection algorithm based solely on this.
+
+Same-frame Java snapshots show `BOOTTIME-MONOTONIC ≈ +18618.216262s` (5h10m18.216s) throughout the 20s copy experiment; the earlier scan showed +9005.776s. Android BOOTTIME includes suspend whereas MONOTONIC does not; any per-device offset must be sampled for each active session, not saved across sleep. This supports a separate online clock-domain conversion module only after verifying the sampling and synchronizing with Windows QPC.
+
+`python pico/tools/analyze_frameclock.py <PicoK0-frameclock.txt>` now parses the opt-in stderr logs, verifies same-frame timing and consistent Android clock offsets, and reports per-camera statistics. Synthetic unit tests: `python -m unittest pico.tests.test_frameclock -v`. User's real textual log is **not** committed because it contains device-specific absolute monotonic timestamps.
+
+**Gate remains BLOCKED:** producer write-lock is not hardware exposure time; a provisional -96ms HMD-pose relative optical delay was inferred from offline associations, but cannot be equated to producer-write age. Existing leave-one-station-out heldout residuals for channels 7 and 13 are tens of pixels. Continue only with offline or read-only timestamp/pose diagnostics until direct exposure/pose-frame alignment and robust geometry are validated; leave `OBSERVE ONLY`, `mapping_verified=false` and `pose_verified=false` unchanged.
