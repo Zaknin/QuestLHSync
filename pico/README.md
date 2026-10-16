@@ -651,3 +651,62 @@ probing live camera ownership. The **next real timebase anchor** must
 come from independent firmware-clock mapping, synchronized optical/IMU
 timing, or verified Camera2-to-QuickCamera frame timestamp correspondence.
 No offset conversion is to be inferred just from six REALTIME enums.
+
+
+### P2 Android CameraService provider inventory — owner read-only dump, 2026-10-16
+
+Owner's `adb shell dumpsys -t 10 media.camera` returned:
+
+- `Number of camera devices: 7`.
+- `Number of normal camera devices: 4`.
+- Legacy-compatible index mappings `Device 0 maps to "0"`,
+  `Device 1 maps to "3"`, `Device 2 maps to "4"`,
+  `Device 3 maps to "5"`.
+- `Camera Provider HAL legacy/0 (v2.5, remote)` with 7 device entries
+  `device@3.5/legacy/0` through `device@3.5/legacy/6`.
+- `Device 0` through `Device 5` were closed with no ordinary
+  CameraService client. This does NOT imply that a separate vendor
+  QuickCamera/pvrtracking pipeline was idle.
+
+**Critical API1 distinction verified against Android 10 AOSP source:**
+`CameraService::updateCameraNumAndIds()` populates
+`mNormalDeviceIds` using
+`CameraProviderManager::getAPI1CompatibleCameraDeviceIds()`.
+The “normal camera devices” dump is the Camera1/API1-compatibility
+subset; its `Device N maps to "ID"` lines translate legacy positional
+indexes to actual string IDs, NOT internal PVR K0 channel indices.
+Source (AOSP historical CameraService):
+https://android.googlesource.com/platform/frameworks/av/+/e397f43/services/camera/libcameraservice/CameraService.cpp
+
+The NDK API `ACameraManager_getCameraIdList` can also enumerate a
+**subset** of SDK CameraManager devices when certain legacy hardware
+is unsupported. Source (official Android NDK):
+https://android.googlesource.com/platform/frameworks/av/+/master/camera/ndk/include/camera/NdkCameraManager.h
+
+Therefore 7 HAL device entries, 6 enumerated NDK IDs (0..5), and 4
+legacy/API1-compatible IDs (0,3,4,5) are NOT by themselves evidence of
+extra sensor hardware, a precise K0 mapping, or a timestamp conversion.
+The 7th entry `legacy/6` needs **static metadata inspection** to
+classify, without Camera2 open/stream commands or identity guessing.
+
+Safe, focused PowerShell 7 inspection (stdout only, discard locally
+after diagnosis unless voluntarily retained as private evidence):
+
+```powershell
+$adbTarget = '192.168.23.12:5555'
+$lines = @(adb -s $adbTarget shell dumpsys -t 10 media.camera)
+if ($LASTEXITCODE -ne 0) { throw 'camera dumpsys failed' }
+$head = $lines | Select-String 'Camera HAL device device@3\.5/legacy/6 .*static information' | Select-Object -First 1
+$tail = $lines | Select-String 'Camera HAL device device@3\.5/legacy/6 .*dumpState' | Select-Object -First 1
+if (-not $head -or -not $tail) {
+    'Camera6 static section missing or truncated; no inference'
+} else {
+    $lines[($head.LineNumber - 1)..($tail.LineNumber - 2)] |
+      Select-String -Pattern 'Camera HAL device|Resource cost|API1 info|android\.info\.supportedHardwareLevel|android\.request\.availableCapabilities|android\.sensor\.info\.timestampSource|android\.sensor\.info\.pixelArraySize|android\.lens\.facing|android\.sensor\.orientation' -Context 0,2 |
+      Select-Object -First 70
+}
+```
+
+Stay OBSERVE ONLY. Even valid public REALTIME metadata for the four
+640x481 EXTERNAL cameras cannot be transferred to internal K0 timestamps
+until the vendor path and timestamp arithmetic are independently verified.
