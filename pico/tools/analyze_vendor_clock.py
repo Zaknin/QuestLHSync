@@ -1,7 +1,9 @@
 """Offline PicoFrameReader --clock-scan CSV diagnostic.
 
 slot+84 is a firmware-verified BOOTTIME buffer-write-lock stamp, NOT the
-physical exposure time. slot+122/+130 are unverified vendor clocks.
+physical exposure time. slot+114 originates in AImage_getTimestamp and agrees with slot+122
+in archived K0 rings, but their clock epoch versus Android BOOTTIME
+and actual sensor exposure time are not independently calibrated.
 Standard Python library only. No headset calibration values are required.
 """
 import argparse
@@ -13,7 +15,7 @@ from statistics import median
 
 CAMERAS = (0, 3, 4, 5)
 REQUIRED = {"sample", "cam", "seq", "newest_seq", "slot", "ring_index",
-            "ring_ts84_ns", "vendor_ns", "ring_ts130_ns",
+            "ring_ts84_ns", "image_ts114_ns", "vendor_ns", "ring_ts130_ns",
             "mono_ns", "boot_ns", "boot_minus_mono_ns"}
 
 
@@ -70,7 +72,8 @@ def analyze(path):
         mono_diff = [b["mono_ns"] - a["mono_ns"] for a, b in zip(rows, rows[1:])]
         vendor_diff = [b["vendor_ns"] - a["vendor_ns"] for a, b in zip(rows, rows[1:])]
         ts84_diff = [b["ring_ts84_ns"] - a["ring_ts84_ns"] for a, b in zip(rows, rows[1:])]
-        if min(seq_diff) <= 0 or min(mono_diff) <= 0 or min(vendor_diff) <= 0 or min(ts84_diff) <= 0:
+        image_diff = [b["image_ts114_ns"] - a["image_ts114_ns"] for a, b in zip(rows, rows[1:])]
+        if min(seq_diff) <= 0 or min(mono_diff) <= 0 or min(vendor_diff) <= 0 or min(ts84_diff) <= 0 or min(image_diff) <= 0:
             errors.append(f"C{cam}: nonmonotonic clock or sequence")
         contiguous = [delta / 1e6 for delta, ds in zip(vendor_diff, seq_diff) if ds == 2]
         if not contiguous:
@@ -99,6 +102,7 @@ def analyze(path):
             "ts84_minus_boot_ms_median": median((r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows),
             "ts84_minus_boot_ms_p10": percentile([(r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows], .1),
             "ts84_minus_boot_ms_p90": percentile([(r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows], .9),
+            "image_ts114_equals_ts122_fraction": sum(r["image_ts114_ns"] == r["vendor_ns"] for r in rows) / len(rows),
             "ts122_minus_ts84_ms_median": median((r["vendor_ns"] - r["ring_ts84_ns"]) / 1e6 for r in rows),
             "ts122_minus_ts130_ms_median": median((r["vendor_ns"] - r["ring_ts130_ns"]) / 1e6 for r in rows),
             "vendor_minus_mono_ms_median": median((r["vendor_ns"] - r["mono_ns"]) / 1e6 for r in rows),
@@ -140,6 +144,7 @@ def main():
             print(f"      slot+84 - BOOTTIME: {row['ts84_minus_boot_ms_median']:+.2f}ms, "
                   f"p10..p90 {row['ts84_minus_boot_ms_p10']:+.2f}.."
                   f"{row['ts84_minus_boot_ms_p90']:+.2f}ms")
+            print(f"      image (+114) equals vendor (+122): {row['image_ts114_equals_ts122_fraction']:.1%}")
             print(f"      slot+122 - slot+84: {row['ts122_minus_ts84_ms_median']:+.3f}ms; "
                   f"slot+122 - slot+130: {row['ts122_minus_ts130_ms_median']:+.3f}ms")
             print(f"      vendor-BOOTTIME: median {row['vendor_minus_boot_ms_median']:+.2f}ms, "
