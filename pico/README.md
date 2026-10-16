@@ -1078,3 +1078,72 @@ The exported `SnsLowLatBridge::qtimer_get_time_ns` and
 functions, but their relationship to K0 cameras is not established.
 No physical sensor exposure timing or PC pose clock is certified;
 no live offset changes permitted.
+
+
+### P2 Quest Pro clock implementation comparison — 2026-10-16
+
+The *actual original upstream* `CreoleVR/QuestLHSync`
+`magisk/src/lhsight.c` uses `clock_gettime(1) = CLOCK_MONOTONIC`
+when the polling loop notices a changed tracking-camera buffer.
+The Quest Pro's `F` network timestamp is that **detection time**,
+not a verified camera-exposure timestamp. Upstream
+`FrameGrid::Lag` subtracts the polling phase, `Clock::AddPing`
+maps headset MONOTONIC to PC QPC, and the HMD pose history records
+`QpcNow() + poseTimeOffset`. The time alignment `expo_`
+initially defaults to 18ms and is motion-learned per streamer;
+it must not be mistaken for a universal camera exposure delay.
+
+Two important upstream **other-headset** variants use genuine
+frame-derived timestamps: Steam Frame converts its V4L2 timestamp
+from `MONOTONIC_RAW` if applicable, and the newer Galaxy XR
+`gxr_sensor` backend advertises sensor BOOTTIME already converted
+to daemon MONOTONIC. Both set `exact_time_=true` once backend
+timestamps are considered aligned. They are a relevant architectural
+example for **future Pico P2**, not an authorization to enable it now.
+Meta's own Quest Pro camera firmware may itself implement QTIMER or
+another hardware clock, but its clock origin cannot be deduced from
+QuestLHSync source; the app simply does not expose such timestamps.
+
+In our fork `pico/src/lhsight_pico.c`, the `PFR1` records include
+both raw `vendor_ts` and MONOTONIC `copied_ns`; the transmitted
+`F` timestamp currently uses **`copied_ns / 1000`** (conservative
+fallback), while `Optics::LoadPico` sets `exact_time_=false`
+and requires `mapping_verified && pose_verified`. This is the
+correct blocked behavior while K0 vendor timestamp domain remains
+uncertified.
+
+Detailed source path and source links are documented in
+[`pico/research/P2-QuestPro-Vs-Pico-Clock-20261016.md`](research/P2-QuestPro-Vs-Pico-Clock-20261016.md).
+
+**New decisive disassembly (SHA-pinned firmware, 2026-10-16):**
+in `CameraReader::OnImageCallback`, `AImage_getTimestamp`
+returns an image-derived value loaded into `x22`, and a separate
+`systemTime(4)=SYSTEM_TIME_BOOTTIME` call returns `x0` moved
+to `x6`. Immediately before the same helper call
+`0x3a8f4`, arguments `x5=x22` and `x6=BOOTTIME`.
+No arithmetic bridges them in the shown basic block. The service
+function `SnsLowLatBridge::qtimer_get_time_ns` reads ARM64
+`CNTVCT_EL0` and `CNTFRQ_EL0` (with nanosecond conversion),
+which is a real architectural hardware timer source in this
+exact Pico firmware but is NOT yet traced into Camera2 AImage.
+
+To independently verify that `dumpsys pvrtracking` QTIMER refers
+to the same architectural timer, a fully separate opt-in NDK
+`--qtimer-counter-only` executable was added. It reads only
+CNTVCT/CNTFRQ + BOOTTIME + MONOTONIC, not the camera or tracking
+buffers, with all live-correction flags false. PowerShell 7 runner:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git switch feature/pico-support
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\capture_qtimer_counter.ps1
+```
+
+This prints two small PVR clock lines enclosing eight hardware-clock
+samples. In a correct match, the hardware `cntvct_minus_boot_ns`
+will closely follow PVR `qtimer - boottime`; do not compare
+their absolute tick readings across separately restarted devices,
+sleep states or firmware builds. This new probe has NOT been compiled
+or executed on the owner's Windows/Android devices as of this commit.
+No time offset is installed, all P2/P3 gates remain OBSERVE ONLY.
