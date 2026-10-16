@@ -156,6 +156,19 @@ def analyze(camera, service, objdump, readelf):
         )
         output.append(format_hits(label + " listener/manager direct call edges", extra_calls))
         output.append("")
+        if label == "SERVICE":
+            vtable_candidates = find_matches(
+                lines, owners,
+                lambda line, fn: bool(INSN.match(line) and (
+                    "#0x370]" in line or "#0x6a0" in line
+                )),
+                max_matches=35, before=9, after=5,
+            )
+            output.append(format_hits(
+                "SERVICE potential CameraImageListener vtable GOT/ADR "
+                "offset matches (require ADRP base proof)", vtable_candidates
+            ))
+            output.append("")
         writes = find_matches(
             lines, owners,
             lambda s, fn: bool(CONFIG_STORE.match(s)),
