@@ -60,7 +60,7 @@ foreach ($region in $regions) {
 # No --start-address for objdump -s: some NDK versions show .dynsym
 # instead of the requested .rodata segment. Read PT_LOAD ELF data
 # with the independent stdlib helper and the proven effective VA.
-python -m pico.tools.elf_cstring_at_va --elf $camera --va 0x254d7 --max-bytes 256
+python (Join-Path $repo 'pico\tools\elf_cstring_at_va.py') --elf $camera --va 0x254d7 --max-bytes 256
 if ($LASTEXITCODE -ne 0) { throw 'Native image callback format string extraction failed' }
 Write-Host 'COMPLETE: all timestamp-source evidence remains private and offline.'
 Write-Host "Location: $dir"
