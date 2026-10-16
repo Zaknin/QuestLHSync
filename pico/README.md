@@ -1674,3 +1674,51 @@ Pico 4 Pro may safely remain **powered off** while the
 owner uses Pimax Crystal. No ADB/SLAM/live HMD access
 is needed until physical-event and PC-pose tests resume.
 OBSERVE ONLY; `exact_time=false`; no driver changes.
+
+
+### P2 listener-wiring reverse XREF — Pico powered off — 2026-10-16
+
+The previous owner's 1,204 completed K0 frames establish a
+**precisely invariant 225,997-ns subtraction** in `slot130`
+relative to `slot122` for the measured recording, and SHA-pinned
+ELF relocations establish a real service
+`CameraManager::CameraImageListener::onFrameAvailable` at
+`0xabbfc` through the virtual table entry at `0x15e6b0`.
+QuickCamera invokes virtual listener entry +0x10 with a native
+`pvr_frame_item_t` descriptor and the setter stores a
+shared listener in `PvrCameraDevice+0x30`. This is an ABI-level
+match, **not yet proof of listener registration on the
+four active K0 PvrCameraDevice instances**.
+
+The next concrete step is to locate and attribute the
+**registration call sites and constructor/initializer stores**
+inside the already archived, SHA-pinned native ELF code.
+New `pico/tools/audit_k0_listener_xrefs.py` can consume complete
+LLVM disassembly on Windows, verify native service vtable
+relocations and enumerate the enclosing function names for
+`setPvrImageListener` call instructions and
+`CameraManager` per-camera `+0x330/+0x338` config reads/writes,
+saving full text locally while printing only a compact index.
+Six new synthetic parser tests are provided; all require
+execution on the owner's Windows checkout.
+
+Use **offline only**, Pico may remain powered off:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_listener_xrefs.ps1
+```
+
+The script does not call ADB, Android camera APIs, SLAM,
+SteamVR or any executable from the vendor firmware. It only
+verifies hashes of private captured libraries and invokes
+Android NDK `llvm-objdump`/`llvm-readelf`.
+Full report:
+`pico/build/p2-static-clock-private-*/p2-listener-cross-references.txt`.
+Source-level status and remaining gates:
+[`P2-K0-SourceAndSlot130-20261016.md`](research/P2-K0-SourceAndSlot130-20261016.md).
+No physical exposure timing or K0-to-PC pose clock
+verification has yet taken place, so
+`exact_time=false`, `OBSERVE ONLY`, and Lighthouse
+live offset/correction gates remain closed.
