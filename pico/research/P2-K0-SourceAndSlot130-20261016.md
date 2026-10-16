@@ -435,3 +435,82 @@ Remaining safety gates are unchanged:
 `FrameMetaDate QTIMER origin=UNVERIFIED`,
 `slot130 optical exposure event=UNVERIFIED`,
 `live_lighthouse_correction_allowed=false`.
+
+
+## New owner offline output — 2026-10-17: callback forwarding and constructor provenance
+
+The owner's `trace_k0_listener_wiring_parameters.ps1` ran
+successfully with **7/7 regression tests passing** and both native
+ELF SHA-256 pins accepted. Key findings:
+
+1. The native listener body
+   `CameraManager::CameraImageListener::onFrameAvailable`
+   at `0xabbfc` is a definite forwarder to
+   `CameraManager::onFrameAvailable(int,pvr_frame_item_t*)`.
+   The function reads `frame_item[0]` into `w8`, accepts
+   `w8<=3` for a compact unsigned-byte jump table at
+   **VA 0x73a10**, and uses
+   `target=0xabc24+4*table[w8]`. Its known case targets
+   send the item to camera IDs **0, 3, 4, 5**; an additional
+   case can read camera ID from `listener+0x10`.
+   The **four actual table bytes have not yet been read**
+   from the private ELF, so the exact index→camera route
+   should not be guessed. The callback's active registration
+   for the four observed K0 rings also remains unverified.
+
+2. `PvrQuickCamera::setPvrImageListener` at
+   `0x6397c` walks owned `PvrCameraDevice` objects and
+   invokes their `setPvrImageListener` at `0x63a1c`.
+   The device setter at `0x65030` stores the listener
+   shared pointer into `device+0x30`; frame producer
+   dispatch subsequently calls the listener vtable
+   entry at `+0x10`. This completes the *generic*
+   QuickCamera callback forwarding interface, but not
+   binding a concrete `CameraImageListener` to an active
+   sensor.
+
+3. `CameraManager::CameraManager` performs
+   `x28=x20; x23=x28-0x300;` and stores `xzr`
+   at `[x23+0x330]`, `d8` at `[x23+0x338]`
+   (0xa71ec/0xa71f0), so in **this local register
+   context** they are `[x28+0x30]` and
+   `[x28+0x38]`. We still need to establish how
+   `x28` relates to `CameraManager` and the
+   `cameraIdx*0x320` layout before treating these
+   initializer values as native timestamp constants B/A.
+   In `setCameraParameters`, `adrp x8,0x163000;
+   ldr x8,[x8,#0x330]` clearly accesses
+   global ELF page data, **not necessarily**
+   `CameraInfo+0x330`; previous broad offset matches
+   from this function must be excluded as false positive
+   candidates for A/B.
+
+New **offline-only** tools have been committed:
+
+- `pico/tools/audit_k0_listener_table.py` reads exactly
+  four bytes at the known jump table VA 0x73a10 via
+  ELF `PT_LOAD` mappings after checking the exact
+  service ELF SHA-256. It only recognizes actual
+  case instruction addresses seen in the native
+  disassembly and refuses unexpected branch targets.
+  Six new unit tests are in
+  `pico/tests/test_k0_listener_table.py`.
+- `pico/tools/trace_k0_constructor_dispatch.ps1`
+  first runs the previous seven and new six tests,
+  decodes the branch routing, and prints bounded
+  constructor/prologue/QuickCamera listener assembly
+  plus potential vtable GOT references. All
+  complete text reports are retained locally and
+  no device operations are performed.
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_constructor_dispatch.ps1
+```
+
+The newly authored script and tests **have not yet been
+run on the owner's PC**; no camera timestamp domain
+may be upgraded from UNVERIFIED based solely on this
+static dispatch mapping. `OBSERVE ONLY`,
+`exact_time=false`, SteamVR HMD pose injection blocked.
