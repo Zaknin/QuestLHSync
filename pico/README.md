@@ -771,3 +771,67 @@ and CALIBRATED sensor synchronization (if reported) would address
 *relative* exposure alignment, NOT the ~4.736s absolute K0 epoch
 disagreement with BOOTTIME. Keep all tracking and timebase safety
 gates blocked; no live corrections.
+
+
+### P2 resolved HAL legacy/6 physical membership and sync contract — 2026-10-16
+
+The owner ran a **read-only** `dumpsys media.camera` static section query.
+For `device@3.5/legacy/6` the exact decisive fields were:
+
+```text
+android.request.availableCapabilities:
+  [BACKWARD_COMPATIBLE RAW YUV_REPROCESSING PRIVATE_REPROCESSING
+   READ_SENSOR_SETTINGS MANUAL_SENSOR BURST_CAPTURE MANUAL_POST_PROCESSING
+   LOGICAL_MULTI_CAMERA]
+android.logicalMultiCamera.physicalIds (1a0000): byte[7]
+  [48 0 49 0 50 0 51]
+android.logicalMultiCamera.sensorSyncType (1a0001): byte[1]
+  [APPROXIMATE]
+```
+
+The byte values are ASCII `0 NUL 1 NUL 2 NUL 3`; thus the logical
+HAL `legacy/6` reports **physical Camera2 IDs "0", "1", "2", "3"**.
+No camera was opened. Note the vendor field is **7 bytes rather than 8**:
+the last ASCII "3" has no terminating NUL in the dump, even though
+Android's tag definition specifies preservation of a final delimiter.
+Interpret the bounded `byte[7]` contents, and do **not** pass this
+potentially unterminated data to unchecked C-string functions.
+This is a static metadata formatting irregularity, NOT evidence of any
+additional physical camera or a timestamp bug.
+
+The owner's physical layout identifies **five outward-facing sensors**:
+four monochrome SLAM/tracking units and one RGB passthrough unit.
+Pico 4 Pro additionally implements inward-facing face/eye tracking,
+and the separate Camera2 ID 5 (400x1600) has **not** been assigned a
+particular physical purpose. Do not count HAL 7 as seven outward sensors.
+Public Camera2 physical IDs 0..3 being members of logical 6
+reinforces, but does not establish an individual correspondence to
+internal PVR K0 Binder IDs C0,C3,C4,C5.
+
+**Important clock nuance:** Android
+`LOGICAL_MULTI_CAMERA_SENSOR_SYNC_TYPE_APPROXIMATE` means there is
+**no guarantee of hardware shutter/exposure synchronization** between
+component sensors. Its metadata documentation explicitly notes that
+images from a *single logical capture request* can still share the
+same frame timestamp despite approximate exposure synchronization.
+Therefore the prior K0 347/501 bitwise-equal four-camera timestamps,
+and worst 53 ns spread, prove **metadata coherence**, not physical
+exposure simultaneity or submicrosecond hardware synchronization.
+This is compatible with the owner's measured K0 records, though the
+hypothesis of common logical request timestamps within the private
+QuickCamera path still requires separate verification.
+
+Official references:
+- https://source.android.com/docs/core/camera/multi-camera
+- https://developer.android.com/ndk/reference/group/camera
+- https://android.googlesource.com/platform/frameworks/av/+/cffd50f6e802b4c33930abdd3ba3d5e1a5d93945/camera/ndk/include/camera/NdkCameraMetadataTags.h
+
+**Current gate:** logical membership verified, per-physical-ID ↔ K0
+index mapping unverified, exposure hardware sync unverified, absolute
+sensor timestamp epoch unverified, PICO Connect HMD pose timestamp
+epoch unverified, blind Lighthouse geometry unverified. Next work
+must trace the archived PVR/QuickCamera timestamp-producing and clock
+conversion code (including `AImage_getTimestamp` entry and the
+`pvr_frame_item_t+0x18/+0x20` propagation) or obtain an independent
+physical/pose event-time anchor. Another Camera2 enumeration or
+speculative +4736ms offset is not useful. **OBSERVE ONLY** stays.
