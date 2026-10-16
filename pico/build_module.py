@@ -92,6 +92,17 @@ def build_camera2_probe():
     return target
 
 
+def build_qtimer_counter_probe():
+    """Standalone read-only ARM64 hardware-counter vs POSIX clocks diagnostic."""
+    BUILD.mkdir(exist_ok=True)
+    clang = clang_executable(sdk_path())
+    target = BUILD / "pico_qtimer_counter_probe"
+    run([clang, "--target=aarch64-linux-android29", "-std=gnu11",
+         "-O2", "-Wall", "-Wextra", "-Werror", "-fPIE", "-pie",
+         HERE / "src/qtimer_counter_probe.c", "-o", target])
+    return target
+
+
 def build():
     OUT.mkdir(exist_ok=True)
     BUILD.mkdir(exist_ok=True)
@@ -131,7 +142,10 @@ def build():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--camera2-probe-only"]:
+    if sys.argv[1:] == ["--qtimer-counter-only"]:
+        print(f"Built read-only CNTVCT/BOOTTIME comparator: {build_qtimer_counter_probe()}")
+        print("Standalone diagnostic only; no cameras, tracking, driver, or image data.")
+    elif sys.argv[1:] == ["--camera2-probe-only"]:
         print(f"Built read-only Camera2 metadata probe: {build_camera2_probe()}")
         print("Standalone executable only; no HMD module, capture, or driver changes.")
     elif sys.argv[1:] == ["--reader-only"]:
@@ -140,4 +154,4 @@ if __name__ == "__main__":
     elif len(sys.argv) == 1:
         build()
     else:
-        raise SystemExit("usage: python pico/build_module.py [--reader-only|--camera2-probe-only]")
+        raise SystemExit("usage: python pico/build_module.py [--reader-only|--camera2-probe-only|--qtimer-counter-only]")
