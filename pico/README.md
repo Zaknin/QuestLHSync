@@ -1581,3 +1581,66 @@ Source-level evidence, known limitations, commands, and gates:
 All newly added tests/tools are **not yet run** on the owner's
 Windows checkout. Existing PFR1, native reader, camera metadata,
 driver optics, and live tracking code remain unchanged.
+
+
+### P2 +130 native correction: measured and formula-confirmed — 2026-10-16
+
+Owner's `review_k0_slot130.ps1` **passed 19/19**
+synthetic unit tests. From the 1,204 real K0 frames:
+`slot+130` was nonzero for every frame, in the same QTIMER-like
+epoch as `slot+122` for all four camera channels (301/301 each),
+never numerically equal to `slot+122`, and
+`median(slot130 - slot122)=-225997 ns` for
+C0,C3,C4,C5 individually. It is not BOOTTIME-like.
+
+A new, precise source-level result from the owner's
+`libpvrtrackingservice.so` disassembly:
+
+```text
+x6  = frame_item+0x20             (K0 slot+122)
+x8  = sign_extend32(frame_item+0x14)
+x10 = *(manager + cameraIdx*0x320 + 0x330)
+x9  = *(manager + cameraIdx*0x320 + 0x338)
+slot130 = x6 - 52000 - x9 - ((x10*x8) ASR 1)
+```
+
+At `0xaaeac` the computed result is placed into
+`frame_item+0x28`; at `0xaaef4` `writeToSm`
+receives the frame and copies `+0x28` to K0 `slot+130`.
+This is a **deliberate native-adjusted frame timestamp**,
+not an arbitrary second clock or a writer artifact. Its
+physical semantics (SOF, rolling shutter, center of exposure,
+another camera event) have NOT been verified, and the shared
+`-225997 ns` medians do NOT imply all per-frame differences
+are constant.
+
+Also owner verified the camera ELF directly depends on Pico's
+three QuickCamera HIDL libraries
+`pico.camera.quickcamera.common@1.0.so`,
+`quickcameramodule@1.0.so` and
+`quickcameradevice@1.0.so`. Service depends on camera ELF.
+`PvrCameraFrame` invokes an image-listener vtable function
+at `0x666e0`; the actual target is unresolved. The
+`CameraManager::CameraImageListener` vtable is present in the
+service, requiring ELF relocations and listener registration
+to establish the full QuickCamera→K0 producer chain.
+
+Detailed evidence:
+[`P2-K0-SourceAndSlot130-20261016.md`](research/P2-K0-SourceAndSlot130-20261016.md).
+
+Next, **offline only**: determine whether the ~226us correction
+varies by frame and inspect the native per-camera config and
+callback-table source with the new SHA-pinned analyzer:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_slot130_parameters.ps1
+```
+
+This writes `slot130-variation.json` alongside existing private
+K0 CSV, prints bounded source excerpts and saves ELF disassembly
+locally. Five new synthetic tests accompany it; they are
+**not yet executed** on the owner's Windows machine.
+All P2 safety gates remain OBSERVE ONLY;
+`exact_time=false`, no live driver clock conversion.
