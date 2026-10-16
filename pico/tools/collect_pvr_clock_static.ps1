@@ -61,6 +61,14 @@ foreach ($item in $files) {
         throw "Firmware hash changed for $($item.Name); old disassembly VAs are not safe to reuse."
     }
 
+    # Imported clock APIs are useful negative/positive evidence but not proof
+    # of the clock semantics of AImage timestamps returned by the HAL.
+    $dyn = @(& $objdump '--dynamic-syms' '--demangle' $binary)
+    if ($LASTEXITCODE -ne 0) { throw "Dynamic symbol read failed: $($item.Name)" }
+    $dyn | Select-String -Pattern 'AImage_getTimestamp|systemTime|clock_gettime|qtimer|GetTime|elapsedRealtime|boottime' |
+        ForEach-Object { $_.Line } |
+        Set-Content -Encoding utf8 (Join-Path $local ($item.Name + '.clock-imports.txt'))
+
     foreach ($range in $item.Ranges) {
         $args = @('--disassemble', '--demangle', '--no-show-raw-insn',
             "--start-address=$($range.From)", "--stop-address=$($range.To)", $binary)
