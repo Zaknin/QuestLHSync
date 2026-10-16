@@ -371,3 +371,67 @@ No new hardware capture and no live correction are needed
 for this inference. The Java comment was updated to distinguish
 the exposure setting from a measured physical duration;
 program execution behavior is unchanged.
+
+
+## Offline callback xref run — 2026-10-17
+
+Owner ran the SHA-pinned two-ELF cross-reference scan
+`trace_k0_listener_xrefs.ps1` after pulling `ab6145e`.
+**Six of six** synthetic tests passed and the scan completed.
+
+Key result: in `libpvrtrackingcamera.so`,
+`pvr::PvrQuickCamera::setPvrImageListener` calls
+`PvrCameraDevice::setPvrImageListener` at **0x63a1c**.
+The latter setter stores the shared listener pointer at
+`device+0x30`, subsequently invoked in
+`PvrCameraFrame::processCameraFrame()` at 0x666e0.
+The service callback vtable relocation
+`0x15e6b0 → CameraImageListener::onFrameAvailable@0xabbfc`
+was revalidated.
+
+**Not yet shown:** construction/registration of the specific
+`CameraImageListener` object through the higher-level
+`PvrQuickCamera` instance that is actually responsible for
+active K0 ids C0/C3/C4/C5. The service has no **direct**
+`bl ...setPvrImageListener` match; calls may go through the
+`PvrCameraBase` virtual interface. The zero matches
+are NOT proof that registration never happens.
+
+Raw field accesses `+0x330,+0x338` also need
+base-register attribution: the unspecialized disassembly
+scanner matched unrelated `ConfigManager::getAim2GripTrans`,
+C++ container code, `PicoCameraDevice`, etc. These are
+**not** evidence for the `CameraManager` per-camera
+timestamp parameters A and B. Relevant, but still ambiguous,
+candidate regions are:
+- `CameraManager::CameraManager`: 0xa71ec/0xa71f0;
+- `CameraManager::setCameraParameters`:
+  0xa8a0c/10, 0xa8bd0/d4, 0xa8d2c/30, 0xa90cc/d0;
+- `CameraImageListener::onFrameAvailable`: 0xabbfc;
+- `PvrQuickCamera::setPvrImageListener`: 0x63a1c.
+
+The offline tool `audit_k0_listener_xrefs.py` was tightened
+to require **both** the correct vtable slot 0x15e6b0
+and exact relocation target 0xabbfc, with a new
+seventh regression test rejecting a forged/wrong target.
+Raw offset matches are now labeled as *base-unverified*.
+
+A new hash-pinned, bounded-excerpt script
+`pico/tools/trace_k0_listener_wiring_parameters.ps1`
+will print only the listed constructor/setup/callback function
+windows, including the originating registers around these
+addresses. It saves text disassembly beside the owner's
+existing private ELF files and never opens the headset.
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_listener_wiring_parameters.ps1
+```
+
+This version has **not yet run on the owner's PC**.
+Remaining safety gates are unchanged:
+`K0 producer callback ownership=UNVERIFIED`,
+`FrameMetaDate QTIMER origin=UNVERIFIED`,
+`slot130 optical exposure event=UNVERIFIED`,
+`live_lighthouse_correction_allowed=false`.
