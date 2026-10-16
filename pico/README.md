@@ -1010,3 +1010,45 @@ and if necessary the proprietary QuickCamera service/libraries, without
 opening another camera or injecting into SLAM. Do NOT subtract the
 session-specific `4746.502621ms` in PFR1/F or tracking: timestamp
 source and pose/exposure semantics are still blocked.
+
+
+### P2 QTIMER static evidence collection (after 2026-10-16 paired test)
+
+The paired QTIMER result warrants **static native call-site verification**
+before touching any live timing code. Public Android Camera HAL metadata
+specifies that `android.sensor.info.timestampSource=REALTIME` must use
+BOOTTIME (see
+https://android.googlesource.com/platform/system/media/+/528a4e2245ab7b0e5f323290a2c501d5d65c704f/camera/docs/metadata_definitions.xml).
+The historical vendor PVR stream matching QTIMER numerically does not
+remove this **contract discrepancy**. A possible vendor timestamp-domain
+bug, distinct QuickCamera path, or custom conversion must be traced;
+do not silently reinterpret the advertised REALTIME characteristic.
+
+An opt-in PowerShell 7 collector
+`pico/tools/collect_pvr_clock_static.ps1` pulls exactly the historical
+`libpvrtrackingcamera.so` and `libpvrtrackingservice.so` from
+`/system/lib64` or `/vendor/lib64` into a **new private local folder**.
+Before using historical virtual addresses, it enforces the previously
+measured October 13 ELF SHA256 values. With the already installed Android
+NDK's `llvm-objdump`, it extracts only five bounded disassembly windows
+surrounding known frame timestamp call/copy operations, together with
+clock API imports and a short `clock-call-edges.txt`. It does not open
+cameras, execute code in vendor processes, modify system files, install
+Magisk, inject libraries, or upload proprietary binaries.
+
+```powershell
+cd C:\Dev\PicoLHSync
+git switch feature/pico-support
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\collect_pvr_clock_static.ps1
+```
+
+If firmware/library hashes differ, the collector intentionally stops
+without applying old disassembly offsets. The narrow call-site extracts
+will confirm the historical K0 propagation and identify the *next*
+HAL/QuickCamera function to inspect, but cannot alone prove the device
+timer source if it is created deeper in the vendor HAL. In particular,
+QTIMER is a hypothesis **not** a ready-to-deploy timebase conversion.
+All observations remain private; report only the text manifest and
+selected call edges to continue the analysis. P2 OBSERVE ONLY gates stay
+enforced.
