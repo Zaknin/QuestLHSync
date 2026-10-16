@@ -1749,3 +1749,40 @@ callback registration and A/B initializer XREFs; it has
 not been executed on the owner's Windows checkout.
 The Pico can remain powered off while the owner uses Pimax.
 No SteamVR, ADB, device or live LHSync interaction.
+
+
+### P2 cross-reference follow-up, with Pico powered off — 2026-10-17
+
+The owner ran `trace_k0_listener_xrefs.ps1`: **6/6 tests
+PASS**, SHA-pinned camera/service static audit completed,
+service `CameraImageListener` callback vtable confirmed.
+The key new static edge is a direct
+`PvrQuickCamera::setPvrImageListener` wrapper call
+to `PvrCameraDevice::setPvrImageListener` at `0x63a1c`;
+this narrows but does not yet certify actual active K0
+listener installation. The service had no *direct* setter
+call-site match; virtual dispatch remains possible.
+
+Unfiltered references to offsets +0x330/+0x338
+contained false-positive other C++ object fields.
+They have **not** yet proved the values of camera timing
+parameters A/B. The next hash-pinned bounded offline
+inspection is:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_listener_wiring_parameters.ps1
+```
+
+This command reruns the updated **7** listener parser tests
+(including a new wrong-relocation-target rejection), then
+prints only focused snippets covering:
+`CameraManager` initialization/parameter reads,
+`CameraImageListener` callback forwarding,
+`PvrQuickCamera` setter delegation, and
+`PvrCameraDevice` setter. Text results are saved
+only in the existing private offline firmware folder.
+No Pico, ADB, camera capture, SteamVR or driver changes.
+Source/ABI proof still differs from runtime active K0
+producer ownership, and `exact_time=false` is unchanged.
