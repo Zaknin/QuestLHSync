@@ -947,3 +947,66 @@ if both dumpsys snapshots bracket the K0 producer BOOTTIME epoch,
 their QTIMER offset is stable, and all four camera gaps give plausible
 positive apparent lag. Any mismatch is diagnostic evidence against
 the current interpretation, not an invitation to fit another offset.
+
+
+
+### P2 live in-session QTIMER ↔ K0 measurement — 2026-10-16, 20:46 local
+
+The owner ran `pico/tools/capture_qtimer_bridge.ps1` using PowerShell 7.6.6,
+the Android SDK Java 8 reader build and four live K0 memory rings. This time
+the old +4.736 s image-vs-BOOTTIME offset was compared against *two bracketing
+PVR QTIMER readings on the same active device session*, rather than crossing
+older recordings or regressing asynchronous Java probe clocks.
+
+**Execution evidence:**
+- Six synthetic `pico.tests.test_qtimer_bridge` tests: **6/6 PASS**.
+- `javac`, `d8`, reader JAR build and ADB push: **PASS** (one harmless
+  Java 8 bootstrap-classpath warning).
+- Four K0 cameras `C0, C3, C4, C5`: **301 completed frames each**
+  over 12 s, 1,204 total.
+- `pvr_boot_brackets_k0_write_epoch: true`.
+- PVR `QTIMER − BOOTTIME`: **+4746.502697 ms before**,
+  **+4746.502545 ms after**, delta **−0.000152 ms** across session
+  (0.152 µs), central estimate **4746.502621 ms**.
+- `PVR BOOTTIME − MONOTONIC`: **+18618216.259970 ms before** and
+  **+18618216.260022 ms after** (this session's suspend-dependent
+  separation, NOT transferable to another reboot/sleep state).
+
+| K0 Binder ID | Frames | AImage +122 minus producer BOOTTIME +84 | QTIMER-hypothesis producer lag |
+| --- | ---: | ---: | ---: |
+| C0 | 301 | 4736.679575 ms | +9.823046 ms |
+| C3 | 301 | 4736.438846 ms | +10.063775 ms |
+| C4 | 301 | 4736.541759 ms | +9.960862 ms |
+| C5 | 301 | 4736.268115 ms | +10.234506 ms |
+
+The oldest separate PVR dump (2026-10-13) independently had
+`QTIMER-BOOTTIME = +4746.402784 ms`: just **0.099837 ms**
+different from the central 2026-10-16 measurement, but different
+sessions/times, and the variation must not be treated as independently
+calibrated inter-session clock drift.
+
+The data **strongly corroborate** an internal native QTIMER-domain
+image-stamp interpretation. It is consistent with an approximately
+10ms acquisition-to-ring-write interval for all four cameras and
+explains the 4.736s sign/magnitude without inventing a physical future
+exposure. **However** numerical consistency alone cannot establish:
+(1) the exact native clock function used to generate AImage timestamp,
+(2) whether the PVR `qtimer` field uses identical clock conventions,
+(3) the true sensor exposure/rolling-shutter time, or (4) the PICO Connect
+/ SteamVR HMD-pose clock conversion.
+
+Report `status=QTIMER_CANDIDATE_REQUIRES_SOURCE_PROOF` is correctly
+fail-closed; ALL live-correction flags remain false. Owner's
+diagnostics are PRIVATE at
+`C:\Dev\PicoLHSync\pico\build\qtimer-p2-private-20261016-204644`
+(`before.txt`, `k0.csv`, `after.txt`, `audit.json`).
+No raw device timestamp recordings or factory calibration were
+uploaded to the public repository.
+
+**Next action:** static, offline firmware-level falsification of the
+native image timestamp source and any QTIMER/BOOTTIME converter. Use
+the already identified `libpvrtrackingcamera.so`, `libpvrtrackingservice.so`
+and if necessary the proprietary QuickCamera service/libraries, without
+opening another camera or injecting into SLAM. Do NOT subtract the
+session-specific `4746.502621ms` in PFR1/F or tracking: timestamp
+source and pose/exposure semantics are still blocked.
