@@ -188,10 +188,27 @@ def main():
     parser.add_argument("--objdump", type=Path, required=True)
     parser.add_argument("--readelf", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--summary", action="store_true")
     args = parser.parse_args()
     result = analyze(args.camera, args.service, args.objdump, args.readelf)
     args.output.write_text(result, encoding="utf-8")
-    print(result)
+    if args.summary:
+        print("PICO_P2_OFFLINE_LISTENER_XREF_V1")
+        lines = result.splitlines()
+        for line in lines:
+            if (line.startswith("[") or line.startswith("Function:")
+                    or line.startswith("service_vtable")
+                    or line.startswith("runtime_listener_")
+                    or line.startswith("QuickCamera_FrameMetaDate_")
+                    or line.startswith("CameraManager_A_B_E_")
+                    or line.startswith("slot130_physical_")
+                    or line.startswith("live_lighthouse_")
+                    or line.startswith("OBSERVE_ONLY")):
+                print(line[:260])
+        print(f"Complete private report: {args.output}")
+        print("No active K0 producer verified solely by a matching vtable ABI.")
+    else:
+        print(result)
 
 
 if __name__ == "__main__":
