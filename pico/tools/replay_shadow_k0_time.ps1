@@ -25,7 +25,7 @@ try {
         }
     }
     $out = Join-Path $dir 'shadow.json'
-    python .\pico\tools\audit_shadow_k0_time.py --before $before --csv $k0 --after $after --output $out
+    python -m pico.tools.audit_shadow_k0_time --before $before --csv $k0 --after $after --output $out
     if ($LASTEXITCODE -ne 0) { throw 'QTIMER shadow diagnostic failed' }
     Write-Host "Private output: $out"
     Write-Host 'DIAGNOSTIC ONLY; F records, exact_time, SteamVR poses unchanged.'
