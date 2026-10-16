@@ -566,3 +566,54 @@ non-disruptive hardware-timed visible/IMU event or validated firmware
 conversion. Do not open Camera2 devices while pvrtracking/SLAM owns
 them, and do not enable live tracking corrections. All P2 gates remain
 false and the normal Pico PFR1 / SteamVR driver unchanged.
+
+
+### P2 six-camera static fingerprint — measured on real Pico 4 Pro, 2026-10-16
+
+Second standalone metadata probe **compiled and executed successfully** after
+setting executable permissions again following `adb push`. All values below
+come from Android Camera2 *static characteristics only*; no cameras were
+opened. `ACAMERA_LENS_FACING_EXTERNAL=2`; `BACK=1`.
+
+| Public Camera2 ID | Facing | Orientation | Pixel array | Advertises 640x480 output | Timestamp source |
+| --- | --- | ---: | --- | --- | --- |
+| 0 | EXTERNAL (2) | 270° | 640x481 | Yes | REALTIME (1) |
+| 1 | EXTERNAL (2) | 270° | 640x481 | Yes | REALTIME (1) |
+| 2 | EXTERNAL (2) | 270° | 640x481 | Yes | REALTIME (1) |
+| 3 | EXTERNAL (2) | 270° | 640x481 | Yes | REALTIME (1) |
+| 4 | BACK (1) | 90° | 2328x1748 | Yes | REALTIME (1) |
+| 5 | BACK (1) | 90° | 400x1600 | No | REALTIME (1) |
+
+The common unusual 640x481 pixel array, 640x480 advertised output,
+orientation and external-facing designation are **strong corroborating
+evidence** that public Camera2 IDs 0..3 are the four tracking cameras
+whose internal K0 image payloads are 640x480. However they **do not**
+prove individual Camera2-ID ↔ internal K0-ID (`C0/C3/C4/C5`) order,
+nor independently verify that `AImage_getTimestamp` values in the
+PVR callback obey the publicly advertised Camera2 timestamp contract.
+
+Re-read of Android public Camera2 specification: for REALTIME the
+capture-result sensor timestamp is in the same domain as
+`SystemClock.elapsedRealtimeNanos()` / Android BOOTTIME. The archived
+internal K0 value `slot+114 == slot+122` ~4736ms *after* the producer
+BOOTTIME buffer-write timestamp contradicts straightforward application
+of that contract. Plausible explanations (still **hypotheses**)
+include internal timestamp re-epoching after Camera2 acquisition,
+undocumented PVR-to-HAL camera path behavior, public-ID mismatch,
+or a vendor metadata/timebase contract violation. Matching camera
+characteristics alone must not be taken as proof of any explanation.
+
+**Next safe identification step**: read the Android 10 camera service's
+own `dumpsys media.camera` (without starting cameras) to extract HAL
+provider/device names and public-ID bindings. If that yields the
+provider mapping, cross-correlate it with the already archived PVR
+binary's source-level/disassembly camera-ID path. Do not upload raw
+camera metadata/extrinsics or open a second capture session. If
+`dumpsys` cannot establish the per-camera correspondence, report it
+as unresolved rather than physically disturbing SLAM or inventing
+an ID mapping. Independently determining the sensor epoch still
+requires a separate observable clock/exposure anchor.
+
+No changes to normal Magisk/Java/PFR1/SteamVR streaming, no
+sensor timestamp corrections, and no relaxation of `OBSERVE ONLY`,
+`mapping_verified=false`, `pose_verified=false`.
