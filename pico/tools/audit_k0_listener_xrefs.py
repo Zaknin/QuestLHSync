@@ -13,8 +13,8 @@ from pathlib import Path
 SHA_CAMERA = "cf9e507f412ec33d62c2f720669fcdd093f1822c9cbf3adefd0a26a6b4d072ee"
 SHA_SERVICE = "45194b15539875ea1ce01fb702d34773b708d248a3409d369877ac199849b8de"
 
-FUNC = re.compile(r"^\s*([0-9a-f]{5,16}) <(.+)>:\s*$")
-INSN = re.compile(r"^\s*([0-9a-f]{5,16}):\s+([a-z.0-9]+)\s*(.*)$")
+FUNC = re.compile(r"^\s*([0-9a-f]{4,16}) <(.+)>:\s*$")
+INSN = re.compile(r"^\s*([0-9a-f]{4,16}):\s+([a-z.0-9]+)\s*(.*)$")
 CALL = re.compile(r"\b(?:bl|blr)\s+")
 CONFIG_STORE = re.compile(
     r"^\s*[0-9a-f]+:\s+(?:str|stur|stp)\b.*\[[xw]\d+,\s*#0x(?:330|338)\]",
