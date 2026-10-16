@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from pico.tools.audit_shadow_k0_time import interpolate, shadow
+from pico.tools.audit_qtimer_bridge import parse_pvr_snapshot
 
 FIELDS = ("sample", "cam", "seq", "newest_seq", "slot", "ring_index",
           "ring_ts84_ns", "image_ts114_ns", "vendor_ns",
@@ -55,6 +56,15 @@ class ShadowTests(unittest.TestCase):
                         "boot_ns": producer + copy_after_ns,
                         "boot_minus_mono_ns": self.bmono,
                     })
+
+    def test_pvr_clock_parser_contract_is_monotime_ns(self):
+        self.snapshots()
+        before = parse_pvr_snapshot(self.before)
+        self.assertEqual(before["monotime_ns"], before["boottime_ns"] - self.bmono)
+        self.assertEqual(
+            before["qtimer_ns"] - before["monotime_ns"],
+            self.qoffset + self.bmono,
+        )
 
     def test_clean_shadow_never_unblocks_live_correction(self):
         self.snapshots()
