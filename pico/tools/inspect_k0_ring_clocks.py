@@ -1,7 +1,7 @@
 """Read-only analysis of Pico K0 ring clock candidates from raw .bin or .zip.
 
-Does not decode pixels or export private camera data. These fields are NOT
-validated physical exposure timestamps.
+Does not decode pixels or export private camera data. Slot+114 and +122
+carry the AImage_getTimestamp value. Clock epoch / physical exposure unverified.
 """
 import argparse
 import json
@@ -27,11 +27,12 @@ def decode_ring(data):
         base = HEADER + STRIDE * i
         seq, = struct.unpack_from("<Q", data, base + 146)
         ts84, = struct.unpack_from("<Q", data, base + 84)
+        ts114, = struct.unpack_from("<Q", data, base + 114)
         ts122, = struct.unpack_from("<Q", data, base + 122)
         ts130, = struct.unpack_from("<Q", data, base + 130)
         exposure, = struct.unpack_from("<I", data, base + 110)
-        if seq % 2 == 1 and ts84 and ts122 and ts130 and exposure == 4:
-            frames.append((seq, ts84, ts122, ts130))
+        if seq % 2 == 1 and ts84 and ts114 and ts122 and ts130 and exposure == 4:
+            frames.append((seq, ts84, ts114, ts122, ts130))
     return sorted(frames)
 
 
@@ -43,7 +44,7 @@ def analyze(path):
                       if i.filename.lower().endswith(".bin") and i.file_size == EXPECTED]
     else:
         inputs = [(source.name, source.read_bytes())]
-    groups = defaultdict(lambda: {"gap": [], "late": [], "step84": [], "step122": [], "rings": 0})
+    groups = defaultdict(lambda: {"gap": [], "late": [], "step84": [], "step122": [], "equal114": 0, "rings": 0})
     for name, data in inputs:
         match = re.search(r"C([0345]).*K0|c([0345]).*k0", name)
         cam = (match.group(1) or match.group(2)) if match else "unknown"
@@ -52,17 +53,19 @@ def analyze(path):
             continue
         g = groups[cam]
         g["rings"] += 1
-        for seq, a, b, c in frames:
+        for seq, a, img, b, c in frames:
             g["gap"].append((b-a) / 1e6)
             g["late"].append((b-c) / 1e6)
+            g["equal114"] += (img == b)
         for before, after in zip(frames, frames[1:]):
             if after[0] - before[0] == 2:
                 g["step84"].append((after[1] - before[1]) / 1e6)
-                g["step122"].append((after[2] - before[2]) / 1e6)
+                g["step122"].append((after[3] - before[3]) / 1e6)
     if not groups:
         raise ValueError("No usable finished K0 camera rings")
     return {"source": source.name, "status": "CLOCK_CANDIDATES_ONLY", "per_camera": {
         cam: {"rings": g["rings"], "frames": len(g["gap"]),
+              "slot114_equals_slot122": g["equal114"],
               "slot122_minus_slot84_ms_median": median(g["gap"]),
               "slot122_minus_slot84_ms_min": min(g["gap"]),
               "slot122_minus_slot84_ms_max": max(g["gap"]),
