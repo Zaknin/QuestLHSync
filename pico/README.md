@@ -465,3 +465,51 @@ authorized to consume these arrays as evidence of a passing calibration.
 No on-device corrections may be enabled. Keep `OBSERVE ONLY`,
 `mapping_verified=false`, `pose_verified=false`, and the original
 PFR1/F timebase unchanged.
+
+
+### P2 read-only Camera2 timestamp source metadata discovery — 2026-10-16
+
+The next independent *metadata* check is whether Android Camera2 exposes
+`ACAMERA_SENSOR_INFO_TIMESTAMP_SOURCE` for any publicly enumerated camera ID.
+This is NOT itself an exposure-time anchor, and public Camera2 device IDs
+are not automatically the same as the internal `pvrtracking` Binder K0 IDs.
+
+The standalone program `pico/src/camera_timestamp_source_probe.c` performs
+only `ACameraManager_getCameraIdList`,
+`ACameraManager_getCameraCharacteristics`, and
+`ACameraMetadata_getConstEntry`. It never opens a camera, creates a session,
+starts a new stream, reads images, calls the tracking Binder service, or
+changes pose data. The build is **opt-in** and does not modify the normal
+Magisk package or Java reader:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git switch feature/pico-support
+git pull --ff-only
+python .\pico\build_module.py --camera2-probe-only
+$ADB = '192.168.23.12:5555'
+adb -s $ADB push .\pico\build\pico_camera2_timestamp_probe /data/local/tmp/pico_camera2_timestamp_probe
+adb -s $ADB shell su -c 'chmod 700 /data/local/tmp/pico_camera2_timestamp_probe; /data/local/tmp/pico_camera2_timestamp_probe'
+```
+
+The output is textual, with a declared static-metadata-only safety mode,
+Android `BOOTTIME` and `MONOTONIC` clock snapshots, exposed Camera2 IDs,
+and per-ID `UNKNOWN`, `REALTIME`, or missing metadata. A successful
+query establishes the characteristic **only for that enumerated Camera2 ID**.
+No mapping from such IDs to `C0/C3/C4/C5` (and no source contract for the
+internal QuickCamera route) has been verified. A result of `REALTIME` for an
+unrelated public Camera2 ID does NOT authorize shifting K0 image timestamps
+or overriding the multi-second image-vs-producer discrepancy; `UNKNOWN`
+likewise does not determine the absolute epoch. A zero-device listing, missing
+key, or permission error is a diagnostic result, not a reason to interfere
+with active SLAM or open a second stream.
+
+Even if a matching K0 Camera2 source were established, the Camera2 source
+enum by itself would not validate the PICO Connect HMD pose timebase or
+the previously measured pose/camera phase shift. An independent exposure
+event or well-characterized firmware clock conversion is still necessary.
+**No Lighthouse power cycling is required for this metadata check.**
+
+Safety gates remain **OBSERVE ONLY**, `mapping_verified=false`,
+`pose_verified=false`, `physical_exposure_time_verified=false`, with
+no live Lighthouse pose corrections.
