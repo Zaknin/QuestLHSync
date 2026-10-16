@@ -51,7 +51,7 @@ foreach ($elf in @($camera, $service)) {
 
 Write-Host '=== Camera callback and cross-DSO symbol references ==='
 foreach ($elf in @($camera, $service)) {
-    $lines = @(Run-Native $objdump @('--syms', '--demangle', $elf))
+    $lines = @(Run-Native $objdump @('--dynamic-syms', '--demangle', $elf))
     $save = Join-Path $dir ((Split-Path $elf -Leaf) + '.symbols.txt')
     $lines | Set-Content -LiteralPath $save -Encoding utf8
     $hits = @($lines | Select-String -Pattern 'PvrCameraDeviceCallback|PvrCameraDevice::|CameraReader::|PvrImageReaderListener::|QuickCameraClient|CameraManager::collectCameraInfo|CameraManager::onFrameAvailable|vtable for pvr::' | ForEach-Object { $_.Line })
