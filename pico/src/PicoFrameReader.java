@@ -224,10 +224,14 @@ public final class PicoFrameReader {
      *
      * Reads only stable shared-memory metadata from the 4 existing K0 rings.
      * Sampling a completed (not newest) slot intentionally adds >= one frame
-     * of uncertainty. Firmware CameraReader::OnImageCallback calls
-     * AImage_getTimestamp; CameraManager::writeToExpSm copies that sample
-     * to slot+114, which equals slot+122 in the archived K0 rings.
-     * This NDK image timestamp's clock epoch is NOT yet aligned to BOOTTIME.
+     * of uncertainty. Firmware CameraReader::OnImageCallback reads an
+     * AImage timestamp, but its relationship to the K0 producer is unproved.
+     * In the *main* image ring, CameraManager::writeToSm(kind=0) directly
+     * copies pvr_frame_item_t+0x18/+0x20/+0x28 into K0 slot+114/+122/+130.
+     * The first two stored stamps matched in 1204 observed K0 frames.
+     * CameraManager::writeToExpSm is a separate kind=1 path and NOT the
+     * source of the observed K0 ring. The vendor timestamp clock/source
+     * and physical exposure event remain unverified.
      * Firmware DataBuffer::lockForWrite calls
      * systemTime(SYSTEM_TIME_BOOTTIME=4) into slot+84: a producer WRITE-LOCK
      * timestamp (not the camera exposure!). slot+122/130 are separate
