@@ -80,6 +80,18 @@ def build_reader(sdk):
     return reader_jar
 
 
+def build_camera2_probe():
+    """Build standalone READ-ONLY characteristics probe; never touch the P1 module."""
+    BUILD.mkdir(exist_ok=True)
+    clang = clang_executable(sdk_path())
+    target = BUILD / "pico_camera2_timestamp_probe"
+    run([clang, "--target=aarch64-linux-android29", "-std=gnu11",
+         "-O2", "-Wall", "-Wextra", "-Werror", "-fPIE", "-pie",
+         HERE / "src/camera_timestamp_source_probe.c",
+         "-lcamera2ndk", "-o", target])
+    return target
+
+
 def build():
     OUT.mkdir(exist_ok=True)
     BUILD.mkdir(exist_ok=True)
@@ -119,10 +131,13 @@ def build():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--reader-only"]:
+    if sys.argv[1:] == ["--camera2-probe-only"]:
+        print(f"Built read-only Camera2 metadata probe: {build_camera2_probe()}")
+        print("Standalone executable only; no HMD module, capture, or driver changes.")
+    elif sys.argv[1:] == ["--reader-only"]:
         print(f"Built diagnostic-capable Java reader: {build_reader(sdk_path())}")
         print("No native daemon or Magisk module installed.")
     elif len(sys.argv) == 1:
         build()
     else:
-        raise SystemExit("usage: python pico/build_module.py [--reader-only]")
+        raise SystemExit("usage: python pico/build_module.py [--reader-only|--camera2-probe-only]")
