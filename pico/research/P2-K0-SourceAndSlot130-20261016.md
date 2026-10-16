@@ -249,3 +249,70 @@ with live SteamVR poses) is explicitly deferred until Pico returns.
 Safety: no PFR1 timestamps were rewritten; `exact_time=false`
 and all Lighthouse live-correction gates stay blocked. All raw
 hardware captures and ELF binaries remain private and local.
+
+
+## P2 offline cross-reference audit: last producer/listener registration link
+
+Pico remains powered off while owner uses Pimax Crystal. No
+fresh capture is needed to resolve the **static** callback link.
+
+The known machine-code/vtable facts should be distinguished from
+the remaining runtime assignment:
+
+```text
+PvrCameraDevice::setPvrImageListener(...)
+    -> stores shared_ptr listener at device+0x30
+PvrCameraFrame::processCameraFrame() at 0x666e0
+    -> virtual call [listener.vptr+0x10] with pvr_frame_item_t*
+CameraManager::CameraImageListener vtable ABI:
+    vtable base 0x15e690, callable address point 0x15e6a0,
+    method +0x10 (relocation at 0x15e6b0)
+    -> CameraImageListener::onFrameAvailable at 0xabbfc
+    -> candidate onward callback into CameraManager::onFrameAvailable
+    -> CameraManager::writeToSm(kind=0) -> K0 slots
+```
+
+The exact vtable relocation is **already confirmed** on this
+firmware. What remains unproven: the listener installed on
+each of the four active K0-producing PvrCameraDevice objects
+has this CameraImageListener vtable, rather than an alternate
+producer/listener.
+
+New `pico/tools/audit_k0_listener_xrefs.py` performs **two-file
+SHA-pinned offline-only** whole-`.text` disassembly, validates
+the real service vtable relocation, prints the exact callback
+forwarder and QuickCamera callsite, and searches all callable
+functions for these useful sources:
+
+- direct calls to `PvrCameraDevice::setPvrImageListener`;
+- direct `CameraImageListener` / `CameraManager::onFrameAvailable`
+  edges;
+- `STR/STUR/STP` writes to per-camera config `+0x330/+0x338`;
+- all other read/write references to these config offsets.
+
+Six synthetic parsing and ABI-gate tests in
+`pico/tests/test_k0_listener_xrefs.py` are designed to
+fail closed for wrong vtable slots; no vendor binaries or
+disassembly text go into the repository.
+
+`pico/tools/trace_k0_listener_xrefs.ps1` runs these tests
+before the full offline XREF audit, saves complete results to
+`p2-static-clock-private-*/p2-listener-cross-references.txt`
+and prints a short index of source function names only:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_listener_xrefs.ps1
+```
+
+This tool has **not yet run** on the owner's PC. The source-level
+cross-references are a candidate for proving the callback chain,
+not a substitute for an observed runtime association with K0.
+Furthermore, until the QuickCamera first metadata word's true
+hardware origin and meaning are established, the strongly
+consistent QTIMER time-domain hypothesis remains
+`k0_image_timestamp_is_qtimer=UNVERIFIED`.
+The physical capture/exposure instant and SteamVR pose clock
+also remain unverified; `exact_time=false`,
+`live_lighthouse_correction_allowed=false`.
