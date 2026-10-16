@@ -40,3 +40,94 @@ The runner checks existing QTIMER and shadow tests along with the new five befor
 To narrow the QuickCamera virtual callback and locate its first FrameMetaDate producer library, an optional second **offline-only** script `pico/tools/audit_k0_callback_dependencies.ps1` inventories the two saved ELF binaries' `DT_NEEDED` and dynamic symbols, dumps the small callback callsite at `0x666c4–0x666f4`, and saves further alternative image reader / CameraManager traces. It does not pull proprietary binaries or access the HMD.
 
 The newly added tools and tests were verified by rereading code from GitHub, **not yet run on the owner's Windows machine**. Do not overstate synthetic tests or source-level provenance in the absence of the next output.
+
+
+## Owner's completed slot130 and callback dependency audit — 2026-10-16
+
+The owner's Windows run **passed all 19/19** synthetic QTIMER, shadow,
+and slot130 tests. Against the earlier real, private 1,204-frame
+K0 capture the report was:
+
+- `status=SLOT130_OBSERVED_SOURCE_UNVERIFIED`;
+- 301/301 slot130 values **nonzero** for each C0/C3/C4/C5;
+- 301/301 values per camera within ±1 second of the K0 raw
+  QTIMER-like epoch, **0/301** within ±1 second of BOOTTIME;
+- slot130 never exactly equals raw slot+122;
+- median `slot130 - slot122 = -225,997 ns` for **each** of the
+  four cameras. The median is identical across cameras, but
+  this alone does not establish that *every individual* difference
+  is fixed or that the timestamp represents the physical exposure center.
+
+The fully readable ARM64 snippet from
+`CameraManager::onFrameAvailable` identifies operands unambiguously:
+
+```text
+0xaae80: ldr x6,[x21,#0x20]       // raw frame_item T122
+0xaae88: madd x9,x26,0x320,x19    // CameraManager indexed camera struct
+0xaae8c: ldrsw x8,[x21,#0x14]     // signed frame metric E
+0xaae90: ldr x10,[x9,#0x330]      // per-camera parameter B
+0xaae94: ldr x9,[x9,#0x338]       // per-camera parameter A
+0xaae98: mov x11,#-0xcb20         // -52,000
+0xaae9c: add x11,x6,x11
+0xaaea0: mul x10,x10,x8
+0xaaea4: sub x9,x11,x9
+0xaaea8: sub x7,x9,x10,asr #1
+0xaaeac: str x7,[x21,#0x28]      // computed field -> K0 slot+130
+```
+
+**Exact arithmetic** (modulo AArch64 integer width and arithmetic
+shift) is:
+
+```text
+slot130 = slot122 - 52000 - camera_config_A
+                    - ((camera_config_B * frame_item_E) ASR 1)
+A = *(int64*)(manager + 0x320 * cameraIdx + 0x338)
+B = *(int64*)(manager + 0x320 * cameraIdx + 0x330)
+E = *(int32*)(frameItem + 0x14)
+```
+
+This is **proof of a deliberately computed QTIMER-epoch
+frame-time adjustment**, because K0 frame+130 is derived directly
+from frame+122. It is NOT yet proof that E is exposure, that
+A/B represent row or shutter timing, or whether the result
+represents start/middle/end of image exposure. The observed
+median correction of 225.997 microseconds cannot be generalized
+as a constant without full per-frame distribution analysis.
+
+The dependency audit confirmed the exact
+`libpvrtrackingcamera.so` ELF links three PICO QuickCamera HIDL
+libraries (`common@1.0`, `quickcameramodule@1.0`,
+`quickcameradevice@1.0`). The exact
+`libpvrtrackingservice.so` links `libpvrtrackingcamera.so`,
+`libpvrtrackingbuffer.so` and `libpvrtrackingcommon.so`.
+These dependencies corroborate a real camera producer-to-service
+architecture, but do not determine which code branch produced
+the owner's four active K0 streams.
+
+In `PvrCameraFrame::processCameraFrame`, the native callback
+instruction sequence is:
+
+```text
+0x666d4: ldr x0,[x8,#0x30]     // callback object
+0x666d8: ldr x8,[x0]           // vptr
+0x666dc: ldr x8,[x8,#0x10]     // vtable method +0x10
+0x666e0: blr x8                // invocation with local frame_item in x1
+```
+
+In the service, the `CameraManager::CameraImageListener` vtable
+symbol is at `0x15e690` with length 0x30, and
+`CameraManager::onFrameAvailable(int,pvr_frame_item_t*)`
+is at `0xaa8f4`. **Do not equate these entry points without
+resolving ELF relocation/vtable pointer targets and the
+PvrCameraDevice listener registration.** A separate
+`PvrImageReaderListener` route exists.
+
+This audit also verified `0xaaef4` calls
+`CameraManager::writeToSm()` after computing +130. K0 writer
+copies this value unchanged to `slot+130`; it does not compute
+the timestamp itself. A source-grounded, focused follow-up is to
+inspect the per-camera `+0x330/+0x338` initialization, the origin
+of frame metric `+0x14`, and the QuickCamera callback vtable.
+
+All data stays local and all safety gates remain BLOCKED for
+live `exact_time` or SteamVR pose compensation.
