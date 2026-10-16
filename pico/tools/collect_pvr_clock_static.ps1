@@ -98,4 +98,5 @@ Get-ChildItem -LiteralPath $local -Filter '*.txt' |
 Write-Host "PASS: firmware static evidence stored locally: $local"
 Get-Content -LiteralPath (Join-Path $local 'manifest.txt')
 Write-Host "Call edges: $extract"
+Get-Content -LiteralPath $extract | Select-Object -First 100
 Write-Host 'NO raw binaries, disassembly, private calibration, or timestamps uploaded to GitHub/Drive.'
