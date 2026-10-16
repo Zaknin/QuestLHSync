@@ -513,3 +513,56 @@ event or well-characterized firmware clock conversion is still necessary.
 Safety gates remain **OBSERVE ONLY**, `mapping_verified=false`,
 `pose_verified=false`, `physical_exposure_time_verified=false`, with
 no live Lighthouse pose corrections.
+
+
+### P2 Camera2 metadata result from real Pico 4 Pro — 2026-10-16
+
+The owner compiled the standalone Android NDK probe using
+`ndk/27.2.12479018` on Windows 11 and executed it via `adb shell su -c`
+on the Pico 4 Pro. **Build: PASS; standalone program: PASS.**
+The probe enumerated six public Camera2 IDs, `0..5`. Each returned
+`ACAMERA_SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME` (`raw=1`).
+Android CLOCK_BOOTTIME minus CLOCK_MONOTONIC at the probe instant was
+**18,618.216259188 seconds**, consistent with a prior in-session measurement.
+The tool exited with `STATIC_METADATA_ONLY`.
+
+This is **not** an independent epoch anchor for the four internal K0
+tracking streams: mapping between public Camera2 IDs `0..5` and internal
+Binder cameras `C0/C3/C4/C5` is unverified. Under the Camera2 REALTIME
+contract, *a matching public device's ordinary image timestamps* should
+use the elapsedRealtime / BOOTTIME domain. The archived K0 images instead
+contain `AImage_getTimestamp` values roughly 4.736 s *ahead of*
+their completed buffer's BOOTTIME write-lock, which is incompatible with
+an unconverted direct REALTIME exposure interpretation. This discrepancy
+could be from an internal HAL/vendor timestamp transformation, a distinct
+non-public stream/domain, or a violated timestamp contract; none is
+currently demonstrated as the cause. In particular, **do not subtract
+4.736 s as a calibration constant**.
+
+As a low-risk follow-up, the *same executable* supports opt-in
+`--fingerprint`: this reports only static facing, sensor orientation,
+pixel array and whether 640x480 output is advertised. No raw images,
+intrinsics, extrinsics, pose, or actual image timestamps are fetched. The
+flag is intentionally separate from the proven V1 default invocation.
+Build and run from the existing Windows checkout:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git switch feature/pico-support
+git pull --ff-only
+python .\pico\build_module.py --camera2-probe-only
+if ($LASTEXITCODE -ne 0) { throw 'Android NDK build failed' }
+$adbTarget = '192.168.23.12:5555'
+$remote = '/data/local/tmp/pico_camera2_timestamp_probe'
+adb -s $adbTarget push .\pico\build\pico_camera2_timestamp_probe $remote
+if ($LASTEXITCODE -ne 0) { throw 'ADB push failed' }
+adb -s $adbTarget shell su -c "$remote --fingerprint"
+```
+
+A matching 640x480 output dimension or orientation can only narrow the
+candidate mapping, not prove it. The next decisive timebase measurement
+still requires an independent exposure/pose clock anchor, e.g. a
+non-disruptive hardware-timed visible/IMU event or validated firmware
+conversion. Do not open Camera2 devices while pvrtracking/SLAM owns
+them, and do not enable live tracking corrections. All P2 gates remain
+false and the normal Pico PFR1 / SteamVR driver unchanged.
