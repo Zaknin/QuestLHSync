@@ -15,7 +15,7 @@ from statistics import median
 
 CAMERAS = (0, 3, 4, 5)
 REQUIRED = {"sample", "cam", "seq", "newest_seq", "slot", "ring_index",
-            "ring_ts84_ns", "image_ts114_ns", "vendor_ns", "ring_ts130_ns",
+            "ring_ts84_ns", "vendor_ns", "ring_ts130_ns",
             "mono_ns", "boot_ns", "boot_minus_mono_ns"}
 
 
@@ -43,13 +43,18 @@ def slope_ppm(rows):
 def analyze(path):
     frames = defaultdict(list)
     errors = []
+    # Old valid clock scans predate the optional +114 column.
+    has_image_stamp = False
     with Path(path).open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames or not REQUIRED.issubset(reader.fieldnames):
             raise ValueError("Not PicoFrameReader --clock-scan CSV (wrong column names)")
+        has_image_stamp = "image_ts114_ns" in reader.fieldnames
         for line_no, row in enumerate(reader, 2):
             try:
                 item = {key: int(row[key]) for key in REQUIRED}
+                if has_image_stamp:
+                    item["image_ts114_ns"] = int(row["image_ts114_ns"])
             except (TypeError, ValueError, KeyError):
                 errors.append(f"noninteger data at line {line_no}")
                 continue
@@ -63,6 +68,7 @@ def analyze(path):
             frames[cam].append(item)
     result = {"file": Path(path).name, "status": "DIAGNOSTIC_ONLY", "per_camera": {},
               "actual_exposure_time_verified": False}
+    cross_camera = defaultdict(list)
     for cam in CAMERAS:
         rows = frames[cam]
         if len(rows) < 2:
@@ -72,8 +78,9 @@ def analyze(path):
         mono_diff = [b["mono_ns"] - a["mono_ns"] for a, b in zip(rows, rows[1:])]
         vendor_diff = [b["vendor_ns"] - a["vendor_ns"] for a, b in zip(rows, rows[1:])]
         ts84_diff = [b["ring_ts84_ns"] - a["ring_ts84_ns"] for a, b in zip(rows, rows[1:])]
-        image_diff = [b["image_ts114_ns"] - a["image_ts114_ns"] for a, b in zip(rows, rows[1:])]
-        if min(seq_diff) <= 0 or min(mono_diff) <= 0 or min(vendor_diff) <= 0 or min(ts84_diff) <= 0 or min(image_diff) <= 0:
+        image_diff = ([b["image_ts114_ns"] - a["image_ts114_ns"] for a, b in zip(rows, rows[1:])]
+                      if has_image_stamp else [])
+        if min(seq_diff) <= 0 or min(mono_diff) <= 0 or min(vendor_diff) <= 0 or min(ts84_diff) <= 0 or (image_diff and min(image_diff) <= 0):
             errors.append(f"C{cam}: nonmonotonic clock or sequence")
         contiguous = [delta / 1e6 for delta, ds in zip(vendor_diff, seq_diff) if ds == 2]
         if not contiguous:
@@ -82,6 +89,9 @@ def analyze(path):
         # newest. Only the observed producer→probe age is measured directly.
         period = median(contiguous) if contiguous else None
         ages = [(row["boot_ns"] - row["ring_ts84_ns"]) / 1e6 for row in rows]
+        gaps = [(row["vendor_ns"] - row["ring_ts84_ns"]) / 1e6 for row in rows]
+        for row in rows:
+            cross_camera[row["seq"]].append((cam, row["vendor_ns"]))
         selected_lags = [row["newest_seq"] - row["seq"] for row in rows]
         ring_steps = [((row["ring_index"] - row["slot"]) % 5) for row in rows]
         boot_mono = [(row["boot_ns"] - row["mono_ns"]) / 1e6 for row in rows]
@@ -102,7 +112,10 @@ def analyze(path):
             "ts84_minus_boot_ms_median": median((r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows),
             "ts84_minus_boot_ms_p10": percentile([(r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows], .1),
             "ts84_minus_boot_ms_p90": percentile([(r["ring_ts84_ns"] - r["boot_ns"]) / 1e6 for r in rows], .9),
-            "image_ts114_equals_ts122_fraction": sum(r["image_ts114_ns"] == r["vendor_ns"] for r in rows) / len(rows),
+            "image_ts114_equals_ts122_fraction": (
+                sum(r["image_ts114_ns"] == r["vendor_ns"] for r in rows) / len(rows)
+                if has_image_stamp else None),
+            "direct_vendor_as_boottime_exposure_allowed": False if min(gaps) > 1000 else None,
             "ts122_minus_ts84_ms_median": median((r["vendor_ns"] - r["ring_ts84_ns"]) / 1e6 for r in rows),
             "ts122_minus_ts130_ms_median": median((r["vendor_ns"] - r["ring_ts130_ns"]) / 1e6 for r in rows),
             "vendor_minus_mono_ms_median": median((r["vendor_ns"] - r["mono_ns"]) / 1e6 for r in rows),
@@ -113,6 +126,17 @@ def analyze(path):
             "newest_minus_chosen_seq_median": median(r["newest_seq"] - r["seq"] for r in rows),
             "vendor_vs_mono_rate_difference_ppm": slope_ppm(rows),
         }
+    synchronized = [pairs for pairs in cross_camera.values() if len(pairs) == len(CAMERAS)
+                    and {c for c, _ in pairs} == set(CAMERAS)]
+    if synchronized:
+        spreads_ns = [max(v for _, v in pairs) - min(v for _, v in pairs) for pairs in synchronized]
+        result["shared_four_camera_sequence_groups"] = len(synchronized)
+        result["max_four_camera_vendor_spread_ns"] = max(spreads_ns)
+        result["four_camera_vendor_exact_equality_fraction"] = sum(x == 0 for x in spreads_ns) / len(spreads_ns)
+    else:
+        errors.append("no four-camera synchronized frame IDs")
+    result["image_ts114_measured_in_this_csv"] = has_image_stamp
+    result["sensor_exposure_clock_epoch_verified"] = False
     if errors:
         result["status"] = "INVALID_OR_INCOMPLETE"
     result["errors"] = errors[:20]
@@ -144,7 +168,12 @@ def main():
             print(f"      slot+84 - BOOTTIME: {row['ts84_minus_boot_ms_median']:+.2f}ms, "
                   f"p10..p90 {row['ts84_minus_boot_ms_p10']:+.2f}.."
                   f"{row['ts84_minus_boot_ms_p90']:+.2f}ms")
-            print(f"      image (+114) equals vendor (+122): {row['image_ts114_equals_ts122_fraction']:.1%}")
+            if row["image_ts114_equals_ts122_fraction"] is None:
+                print("      image (+114): not present in this older CSV; historical ring validation applies")
+            else:
+                print(f"      image (+114) equals vendor (+122): {row['image_ts114_equals_ts122_fraction']:.1%}")
+            if row["direct_vendor_as_boottime_exposure_allowed"] is False:
+                print("      REJECT: raw image stamp is ahead of producer BOOTTIME by seconds")
             print(f"      slot+122 - slot+84: {row['ts122_minus_ts84_ms_median']:+.3f}ms; "
                   f"slot+122 - slot+130: {row['ts122_minus_ts130_ms_median']:+.3f}ms")
             print(f"      vendor-BOOTTIME: median {row['vendor_minus_boot_ms_median']:+.2f}ms, "
