@@ -12,6 +12,7 @@
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 static int64_t clock_ns(clockid_t clock_id) {
@@ -28,9 +29,56 @@ static const char *source_name(uint8_t source) {
     }
 }
 
-int main(void) {
+/*
+ * Optional static fingerprint. No poseRotation, poseTranslation, intrinsic
+ * calibration, lens distortion, images, or live capture metadata are exposed.
+ * This narrows K0 candidates by public static sensor features, not identity.
+ */
+static void print_static_fingerprint(const char *id, const ACameraMetadata *meta) {
+    ACameraMetadata_const_entry entry;
+    int facing = -1, orientation = -1;
+    int pixels_w = -1, pixels_h = -1, output_640x480 = -1;
+
+    if (ACameraMetadata_getConstEntry(meta, ACAMERA_LENS_FACING, &entry) == ACAMERA_OK &&
+        entry.type == ACAMERA_TYPE_BYTE && entry.count == 1)
+        facing = entry.data.u8[0];
+
+    if (ACameraMetadata_getConstEntry(meta, ACAMERA_SENSOR_ORIENTATION, &entry) == ACAMERA_OK &&
+        entry.type == ACAMERA_TYPE_INT32 && entry.count == 1)
+        orientation = entry.data.i32[0];
+
+    if (ACameraMetadata_getConstEntry(meta, ACAMERA_SENSOR_INFO_PIXEL_ARRAY_SIZE, &entry) == ACAMERA_OK &&
+        entry.type == ACAMERA_TYPE_INT32 && entry.count == 2) {
+        pixels_w = entry.data.i32[0];
+        pixels_h = entry.data.i32[1];
+    }
+
+    if (ACameraMetadata_getConstEntry(meta, ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, &entry) == ACAMERA_OK &&
+        entry.type == ACAMERA_TYPE_INT32 && entry.count > 0 && entry.count % 4 == 0) {
+        output_640x480 = 0;
+        for (uint32_t j = 0; j + 3 < entry.count; j += 4) {
+            /* Format, width, height, direction; output direction is zero. */
+            if (entry.data.i32[j + 1] == 640 && entry.data.i32[j + 2] == 480 &&
+                entry.data.i32[j + 3] == 0) {
+                output_640x480 = 1;
+                break;
+            }
+        }
+    }
+    printf("camera2_id=%s fingerprint_facing=%d orientation_deg=%d "
+           "pixel_array=%dx%d supports_640x480_output=%d\n",
+           id, facing, orientation, pixels_w, pixels_h, output_640x480);
+}
+
+int main(int argc, char **argv) {
+    const int fingerprint = argc == 2 && strcmp(argv[1], "--fingerprint") == 0;
+    if (argc > 2 || (argc == 2 && !fingerprint)) {
+        fprintf(stderr, "usage: pico_camera2_timestamp_probe [--fingerprint]\n");
+        return 64;
+    }
     printf("PICO_CAMERA2_TS_SOURCE_PROBE_V1\n");
     printf("mode=ENUMERATE_STATIC_CHARACTERISTICS_ONLY\n");
+    printf("static_fingerprint_enabled=%s\n", fingerprint ? "true" : "false");
     printf("k0_camera2_id_mapping_verified=false\n");
     printf("physical_exposure_epoch_verified=false\n");
     printf("live_lighthouse_correction_allowed=false\n");
@@ -78,6 +126,7 @@ int main(void) {
             if (raw != ACAMERA_SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME &&
                 raw != ACAMERA_SENSOR_INFO_TIMESTAMP_SOURCE_UNKNOWN) ++failures;
         }
+        if (fingerprint) print_static_fingerprint(id, meta);
         ACameraMetadata_free(meta);
     }
     ACameraManager_deleteCameraIdList(ids);
