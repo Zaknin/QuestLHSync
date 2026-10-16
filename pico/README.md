@@ -438,9 +438,9 @@ The split audit requires `numpy` (already used by the existing offline solver), 
 
 ### P2 deterministic validation-fold preparation — 2026-10-16
 
-Following the split audit, \`pico/tools/plan_solver_folds.py\` prepares PRIVATE,
+Following the split audit, `pico/tools/plan_solver_folds.py` prepares PRIVATE,
 reproducible diagnostic train/test index arrays from an existing
-\`correspondences.npz\` (\`session\`, \`ch\`, \`t\` arrays). It creates one
+`correspondences.npz` (`session`, `ch`, `t` arrays). It creates one
 leave-entire-session-out fold per recorded session and four
 leave-entire-station-out folds (Lighthouse channels 1, 7, 10, 13).
 
@@ -462,6 +462,6 @@ training captures, blindly detect sources afresh in the held-out raw capture,
 apply OFF/ON negative controls, and evaluate station-center geometry, timing,
 per-channel pixel residuals and metric accuracy. The existing solver is NOT
 authorized to consume these arrays as evidence of a passing calibration.
-No on-device corrections may be enabled. Keep \`OBSERVE ONLY\`,
-\`mapping_verified=false\`, \`pose_verified=false\`, and the original
+No on-device corrections may be enabled. Keep `OBSERVE ONLY`,
+`mapping_verified=false`, `pose_verified=false`, and the original
 PFR1/F timebase unchanged.
