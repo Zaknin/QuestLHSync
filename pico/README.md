@@ -1722,3 +1722,30 @@ No physical exposure timing or K0-to-PC pose clock
 verification has yet taken place, so
 `exact_time=false`, `OBSERVE ONLY`, and Lighthouse
 live offset/correction gates remain closed.
+
+
+**New P2 source-derived simplification (2026-10-16):** native
+`CameraManager::writeToSm` stores `frame_item+0x14`
+in K0 `slot+110`. The Java `--clock-scan` only
+accepts and then revalidates slots for which
+`slot+110 == 4`; hence the native correction operand
+`E=4` for every accepted frame in the archived sample.
+Combined with the exact observed `slot122-slot130=225997ns`,
+the native source equation simplifies to
+`slot130=slot122-52000-A-2B`, implying
+`A+2B=173997ns` for the observed camera configuration.
+Java already calls this integer the K0 `exposure`
+setting; it is **not proved to be a physical duration**,
+and the `+130` epoch's exact exposure event semantics
+remain unknown. The code comment was clarified; frame
+selection and output are unchanged.
+
+A new offline SHA-pinned native callsite analyzer has
+been committed as
+`pico/tools/trace_k0_listener_xrefs.ps1`, using
+`pico/tools/audit_k0_listener_xrefs.py` and six
+new synthetic parser tests. This targets the remaining
+callback registration and A/B initializer XREFs; it has
+not been executed on the owner's Windows checkout.
+The Pico can remain powered off while the owner uses Pimax.
+No SteamVR, ADB, device or live LHSync interaction.
