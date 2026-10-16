@@ -396,3 +396,22 @@ The private 20-second live `PicoK0-clockscan.csv` was re-analyzed together with 
 Engineering changes: `pico/tools/analyze_vendor_clock.py` now accepts both the **original live CSV without `image_ts114_ns`** and newer `--clock-scan` CSV with that optional field; detects four-camera per-sequence image coherence; emits an explicit `direct_vendor_as_boottime_exposure_allowed=false` when future sensor timestamps falsify that interpretation. Six unit-test cases cover legacy compatibility and cross-camera behavior. `actual_exposure_time_verified` / `sensor_exposure_clock_epoch_verified` remain false.
 
 **Next required measurement:** a clock-epoch anchor independent of `slot+84` (producer write-lock) and PICO Connect's pose prediction timestamp, or an independently timed optical/IMU stimulus. **Next geometry gate:** blind, session-separated detections not selected around fitted landmarks and leave-one-base-out validity. While either gate fails, `OBSERVE ONLY`, `mapping_verified=false`, `pose_verified=false`, and unchanged `F` timestamp stay mandatory.
+
+### P2 paired-clock rate recheck — 2026-10-16
+
+**Read-only progress; neither physical exposure nor live clock conversion is established.** A new standard-library tool `python pico/tools/audit_paired_clocks.py <PicoK0-clockscan.csv> [--output result.json]` estimates short-baseline CLOCK RATE using each frame's own `slot+122 AImage` timestamp versus its `slot+84 BOOTTIME producer-write` timestamp. It bins same-frame differences into 1-second medians to avoid the 40ms phase noise of previously comparing images to later Java probe MONOTONIC timestamps. Older live CSVs without optional `slot+114` are accepted.
+
+| Camera | Same-frame image-minus-producer median (ms) | 20-second binned rate difference (ppm) |
+| --- | ---: | ---: |
+| C0 | 4736.4960 | +0.20 |
+| C3 | 4736.2179 | +0.28 |
+| C4 | 4736.6365 | +0.51 |
+| C5 | 4736.3782 | −3.27 |
+
+Input was the previously validated 2,004-row live Pico clock scan; 501 four-camera sequence groups and at most 53ns per-group spread of the AImage sensor timestamp. This short record supplies **no strong evidence for a 30–43ppm image-vs-BOOTTIME clock-rate mismatch**. The older vendor-vs-PROBE-MONOTONIC rate measurements were made at different instants in a 25Hz ring and are not a suitable estimate of *paired* physical clock-rate difference. Even the new small per-camera estimates are noisy and must not be extrapolated into an authoritative long-run ppm correction.
+
+Fundamental ambiguity: let image timestamp = physical exposure + unknown sensor epoch, and producer BOOTTIME = physical exposure + sensor-to-producer processing delay. Their observed difference identifies only **epoch minus processing delay**, not either term separately. Consequently, the roughly +4.736s offset cannot be turned into exposure time by subtraction, even if the clock slopes agree. The hardware exposure timestamp domain / PICO Connect HMD pose epoch remain unverified.
+
+Safety contract: independent of computed ppm, the tool returns `camera_clock_epoch_verified=false`, `physical_exposure_time_verified=false`, `hmd_pose_timebase_verified=false`, `live_lighthouse_correction_allowed=false`. It explicitly validates monotonic sequences and cross-camera coverage, with 5 offline synthetic regression tests (`python -m unittest pico.tests.test_paired_clocks -v`) covering zero rate skew, known +12ppm skew, missing camera, duplicate sequence and image-timestamp jump. No Pico Java streaming changes or SteamVR corrections were made.
+
+Next research stage: obtain an *independent* event/epoch anchor for `AImage_getTimestamp` and for HMD pose prediction timestamps; perform blind station-point association without using the landmark that seeds its own validation. The station-withheld geometric error remains tens of pixels for channels 7/13: do not enable `OBSERVE ONLY` overrides.
