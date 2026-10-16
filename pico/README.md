@@ -1421,3 +1421,110 @@ The revised extraction has not yet been run on the owner's PC.
 Until the two producer branches and their frame item metadata
 are unambiguously traced, do NOT mark K0 timestamp as verified
 QTIMER or switch LHSync to `exact_time`. Continue OBSERVE ONLY.
+
+
+### P2 definitive K0 main-ring timestamp copy and QuickCamera duplication lead — 2026-10-16
+
+The owner ran the expanded, SHA-pinned **offline ELF disassembly**
+(`trace_k0_frame_provenance.ps1`), with all previous ADB and
+clock-projection safety gates intact. This new trace closed a critical
+misattribution and materially advanced the producer provenance.
+
+**The direct K0 image-ring copy is now verified in the exact
+`libpvrtrackingservice.so` disassembly**, not merely in the
+separate exposure ring. `PicoFrameReader.java` requests
+`GetCameraShareMemory(cameraId, kind=0)`. In
+`CameraManager::writeToSm(CameraInfo&, int kind, pvr_frame_item_t*)`,
+`kind=0` selects main buffer `CameraInfo+0x98`, not the
+exposure preprocessing/`writeToExpSm` path reserved for `kind=1`.
+`x21` holds `pvr_frame_item_t*`; `x22` holds its locked K0
+record's metadata body pointer:
+
+```text
+0xab7c0: ldp x12,x13,[x21,#0x18]   # frameitem +0x18, +0x20
+0xab7cc: cmp x23,#0                # kind=0 sets x23=0
+0xab7e0: csel x9,x12,x23,eq        # kind=0 => x9=x12
+0xab7ec: stur x13,[x22,#0x19]     # K0 slot +122
+0xab7f0: stur x9, [x22,#0x11]     # K0 slot +114
+0xab7f4: ldr x9,[x21,#0x28]
+0xab804: stur x9, [x22,#0x21]     # K0 slot +130
+0xab800: add x23,x22,#0x59        # start of image pixel payload
+```
+
+The locked K0 record starts its item metadata body at **slot+97**,
+independently corroborated by reader's slot+97 sensor id and
+`PIXEL_OFFSET=186 = 97+0x59`. Thus producer struct fields
+`+0x18,+0x20,+0x28` map exactly to observed
+`K0 slot+114,+122,+130`. No epoch conversion is performed
+**inside the main image-ring writer**. The 1,204-frame paired equality
+`slot+114==slot+122` is a real observation about two producer
+metadata fields and must be traced *upstream*, not credited to
+`AImage_getTimestamp` without further evidence.
+
+**A strong source-level explanation for that equality now exists
+in the OTHER side of the firmware**. In
+`libpvrtrackingcamera.so`,
+`PvrCameraFrame::processCameraFrame()` calls
+`QuickCameraClient::DeQueueFrame(void**,FrameMetaDate*)`
+at `0x66634`, with `FrameMetaDate` output at `sp+0x10`.
+After success, the code:
+
+```text
+0x6667c: ldp x11,x10,[sp,#0x10] # first two 64-bit FrameMetaDate words
+0x66680: add x1,sp,#0x40       # local pvr_frame_item_t body pointer
+0x666a0: str x10,[sp,#0x70]    # local frameitem+0x30
+0x666a8: stp x11,x11,[sp,#0x58] # local frameitem+0x18 and +0x20
+```
+
+This deliberately duplicates the **FIRST QuickCamera FrameMetaDate
+64-bit word** into the **two exact timestamp slots** later copied
+to K0 `+114` and `+122`, **if that QuickCamera-generated
+frame is the active K0 producer**. The code-path attribution
+and this hypothesis are substantially stronger than the old
+approximate timestamp correlation; however, the actual matching
+callback route still needs to be traced through
+`PvrCameraFrame` virtual dispatch into the
+`CameraManager::onFrameAvailable` consumer. The HAL/provider origin,
+epoch and event represented by that first QuickCamera metadata
+word remain **unverified**.
+
+The separate `CameraReader::OnImageCallback` uses
+`AImage_getTimestamp()` to order a queue/tree; there is no
+justification to claim it writes to K0 merely because its
+diagnostic `systemTime(4)` appeared nearby. The
+`0x3b4c0` target is a **compiler-outlined printf varargs helper**,
+confirmed by `__vsnprintf_chk`, not a synchronization routine.
+
+**One tooling correction:** the previous PowerShell command
+`llvm-objdump -s --start-address=0x254c0` produced a dump of
+`.dynsym`, NOT the intended camera log literal from `.rodata`;
+that result must not be interpreted. New offline stdlib
+`pico/tools/elf_cstring_at_va.py` maps an ELF64 AArch64
+virtual address via `PT_LOAD` file offsets, with bounds
+and NUL checks, to inspect exactly the callback string at
+`0x254d7`; it has five new synthetic tests.
+
+The targeted next step is a **single offline source-branch audit**:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+python -m unittest pico.tests.test_elf_cstring_at_va -v
+pwsh -NoProfile -File .\pico\tools\trace_k0_timestamp_producers.ps1
+```
+
+`trace_k0_timestamp_producers.ps1` is SHA-pinned to the same
+local camera/service ELF files, extracts and displays:
+(1) QuickCamera `FrameMetaDate`→frame-item construction;
+(2) the AImageReader timestamp-tree/dispatch alternative;
+(3) `PvrImageReaderListener` frame-item construction;
+(4) the proven main K0 record writer;
+(5) `onFrameAvailable` branches that invoke writer.
+It stores bounded disassembly and does not use ADB or touch the
+headset, calibration, private frame captures or driver.
+
+**P2 gates remain unchanged:** QTIMER ↔ BOOTTIME ↔ MONOTONIC
+consistency strong, native QuickCamera duplicate timestamp
+construction now supported by static code, but K0 callback
+producer origin and true optical exposure semantics still
+unverified; do not enable `exact_time` or Lighthouse correction.
