@@ -316,3 +316,58 @@ consistent QTIMER time-domain hypothesis remains
 The physical capture/exposure instant and SteamVR pose clock
 also remain unverified; `exact_time=false`,
 `live_lighthouse_correction_allowed=false`.
+
+
+## IMPORTANT: source cross-check proves native formula operand E=4 on all observed K0 frames
+
+This follows directly from comparing owner-supplied `writeToSm`
+disassembly and the **actual Java ring-selection logic**:
+
+```text
+main K0 writer (service ELF):
+  0xab7c8 ldp w8,w11,[x21,#0x10]  -> w11 = frame_item+0x14
+  0xab810 stur w11,[x22,#0x0d]    -> K0 slot+97+0x0d = slot+110
+
+Java PicoFrameReader.java, all --clock-scan K0 accepted frames:
+  c.view.getInt(base+110) == 4
+  (also rechecked after stable-slot sequence validation)
+
+native slot+130 formula:
+  0xaae8c ldrsw x8,[x21,#0x14]    -> E = 4 for accepted K0 frames
+  slot130 = slot122 - 52000 - A - ((B*4) ASR 1)
+          = slot122 - 52000 - A - 2*B
+```
+
+Since `slot122 - slot130 = 225997ns` on **all 1,204
+accepted frames**, the native arithmetic imposes a precise
+constraint under the same camera runtime conditions:
+
+```text
+A + 2*B = 225997 - 52000 = 173997 ns
+```
+
+This is stronger than guessing from the constant median; the
+source proves **why E did not vary in the selected frames**.
+It is a camera metadata **exposure code/mode value `4`**
+(the production Java reader already names the field
+`exposure`), **not a verified duration in nanoseconds**.
+Do not label `E=4` as `4ns`, `4us`, `4 rows`,
+or any known physical exposure duration. Whether the
+specific correction represents image-exposure midpoint,
+rolling-shutter delay, start-of-frame offset or another
+vendor clock alignment is still unknown.
+
+On the candidate QuickCamera metadata path, `FrameMetaDate`
+at `sp+0x10` also supplies `E`:
+`ldp w12,w9,[sp,#0x20]` at `0x666b0`
+loads the 32-bit value at metadata `+0x10`;
+`str w12,[sp,#0x54]` at `0x666bc` writes
+`pvr_frame_item_t+0x14` (base `sp+0x40`).
+This is an independent, source-level **candidate** route for
+the K0 exposure code. It still requires resolving which
+listener is bound to each active K0-producing camera.
+
+No new hardware capture and no live correction are needed
+for this inference. The Java comment was updated to distinguish
+the exposure setting from a measured physical duration;
+program execution behavior is unchanged.
