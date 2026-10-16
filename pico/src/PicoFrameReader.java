@@ -101,6 +101,9 @@ public final class PicoFrameReader {
                 if (chosen < 0) break;
                 int base = HEADER + chosen * STRIDE;
                 long writeLockBootNs = FRAME_CLOCK_DIAG ? view.getLong(base + 84) : 0L;
+                // K0 exposure setting/code (4) = native frame_item+0x14.
+                // This is NOT a physical duration in nanoseconds; native PVR
+                // uses the code as an operand in the derived slot+130 stamp.
                 int exposure = view.getInt(base + 110);
                 if (exposure != 4)
                     throw new IllegalStateException("C" + id + ": K0 exposure changed to " + exposure);
