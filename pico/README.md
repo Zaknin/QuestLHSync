@@ -835,3 +835,94 @@ conversion code (including `AImage_getTimestamp` entry and the
 `pvr_frame_item_t+0x18/+0x20` propagation) or obtain an independent
 physical/pose event-time anchor. Another Camera2 enumeration or
 speculative +4736ms offset is not useful. **OBSERVE ONLY** stays.
+
+
+### P2 QTIMER clock-domain lead — recovered archival evidence, 2026-10-16
+
+**A materially new hypothesis was recovered from the owner's
+2026-10-13 read-only `dumpsys pvrtracking` transcript** (recorded
+during a separate earlier headset session):
+
+```text
+time boottime 10433928640393, monotime 10433928640758, qtimer 10438675043177
+```
+
+Treating these 64-bit readings as nanoseconds, this yields
+
+```text
+PVR qtimer - PVR boottime   = 4,746,402,784 ns = +4,746.402784 ms
+K0 image +122 - write +84  ≈ +4,736 ms      (other recorded session)
+Difference                   ≈ +10.4 ms      (cross-session, not verified)
+```
+
+**Testable explanation, NOT yet confirmed:** the K0 AImage timestamp
+might originate in the vendor/Qualcomm QTIMER clock domain, while
+K0 `slot+84` is a BOOTTIME producer-write-lock timestamp. Subtracting
+their epoch difference leaves a positive ~10ms **possible producer lag**
+(frame acquisition to producer lock). This numerical proximity is
+much more specific than fitting an arbitrary camera/SteamVR lag, but
+does NOT prove a QTIMER source, hardware exposure, exact session offset,
+or firmware clock conversion. In particular, vendor `dumpsys` names
+are NOT an API-level clock contract; even its `boottime` field must
+be verified against the CameraManager `slot+84` BOOTTIME clock in the
+*same session*. We must not use this historic value to calibrate
+new frames or the existing ~-96ms offline geometric lag.
+
+New stdlib-only **offline** tool:
+`pico/tools/audit_qtimer_bridge.py --before before.txt --csv k0.csv
+--after after.txt`. It compares per-session PVR QTIMER-minus-PVR-BOOT
+from two service snapshots with the per-camera
+K0 `vendor_ns-ring_ts84_ns` gaps from the *intervening* live read-only
+`--clock-scan`. It fails closed if the PVR clock epoch does not bracket
+K0 ring write-lock times, if QTIMER offset moves more than 2ms during
+this short session, or if resulting apparent producer lag is negative
+or beyond 100ms. **These engineering bounds are diagnostic heuristics,
+not proof of sensor exposure latency.** The output always keeps
+`qtimer_timestamp_source_verified=false`,
+`sensor_exposure_time_verified=false`,
+`camera2_to_k0_mapping_verified=false`,
+`steamvr_pose_clock_verified=false`, and
+`live_lighthouse_correction_allowed=false`.
+
+One-off read-only execution from owner's Windows PowerShell 7 checkout.
+No Lighthouse switching, second camera stream, driver build, or Magisk
+install is required. Device tracking must be awake for 12 seconds.
+Reader JAR build/push uses the already supported `--reader-only` mode:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git switch feature/pico-support
+git pull --ff-only
+python -m unittest pico.tests.test_qtimer_bridge -v
+if ($LASTEXITCODE -ne 0) { throw 'QTIMER offline tests failed' }
+python .\pico\build_module.py --reader-only
+if ($LASTEXITCODE -ne 0) { throw 'Reader build failed' }
+$adbTarget = '192.168.23.12:5555'
+$jar = '/data/local/tmp/PicoFrameReader.jar'
+adb -s $adbTarget push .\pico\build\PicoFrameReader.jar $jar
+if ($LASTEXITCODE -ne 0) { throw 'Reader JAR push failed' }
+
+$save = Join-Path $PWD 'pico\build\qtimer-p2-private'
+New-Item -ItemType Directory -Force -Path $save | Out-Null
+function Read-PvrClock {
+    $raw = @(adb -s $adbTarget shell su -c 'dumpsys -t 10 pvrtracking')
+    if ($LASTEXITCODE -ne 0) { throw 'pvrtracking dumpsys failed' }
+    $match = $raw | Select-String -Pattern '^time boottime \d+, monotime \d+, qtimer \d+' | Select-Object -First 1
+    if (-not $match) { throw 'PVR clock line absent' }
+    $match.Line
+}
+Read-PvrClock | Set-Content -Encoding utf8 (Join-Path $save 'before.txt')
+$rows = @(adb -s $adbTarget shell su -c "CLASSPATH=$jar /system/bin/app_process /system/bin PicoFrameReader --clock-scan 12")
+if ($LASTEXITCODE -ne 0) { throw 'K0 clock scan failed; no partial evidence' }
+$rows | Set-Content -Encoding utf8 (Join-Path $save 'k0.csv')
+Read-PvrClock | Set-Content -Encoding utf8 (Join-Path $save 'after.txt')
+python .\pico\tools\audit_qtimer_bridge.py --before (Join-Path $save 'before.txt') --csv (Join-Path $save 'k0.csv') --after (Join-Path $save 'after.txt') --output (Join-Path $save 'audit.json')
+if ($LASTEXITCODE -ne 0) { throw 'QTIMER audit failed' }
+```
+
+This session may refute the hypothesis. A promising
+`QTIMER_CANDIDATE_REQUIRES_SOURCE_PROOF` result is only a new
+**independent cross-clock consistency measurement**, not an approval
+to shift `F` frame records or to enable P3 tracking corrections.
+The old exact numbers are historic and must not be treated as
+current clock offsets. Keep any generated timestamp recordings private.
