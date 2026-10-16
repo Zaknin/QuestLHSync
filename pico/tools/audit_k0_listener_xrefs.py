@@ -85,7 +85,8 @@ def vtable_target(relocation_text):
         if len(cols) < 5:
             continue
         if (cols[0].lower().lstrip("0") == "15e6b0"
-                and "R_AARCH64_ABS64" in line
+                and cols[2] == "R_AARCH64_ABS64"
+                and cols[3].lower().lstrip("0") == "abbfc"
                 and "CameraImageListener" in line
                 and "onFrameAvailable" in line):
             return True
@@ -172,6 +173,7 @@ def analyze(camera, service, objdump, readelf):
     output.extend([
         "NEXT_GATES:",
         "runtime_listener_wiring=UNVERIFIED",
+        "raw_offset_330_338_matches_are_NOT_proven_to_be_camera_config=TRUE",
         "QuickCamera_FrameMetaDate_clock_origin=UNVERIFIED",
         "CameraManager_A_B_E_physical_meaning=UNVERIFIED",
         "slot130_physical_exposure_instant=UNVERIFIED",
