@@ -173,3 +173,79 @@ The new tools and synthetic tests were checked in and read back
 but have NOT yet been executed on the owner's Windows checkout.
 No headset access, new camera data capture, exposure manipulation,
 or live `exact_time` activation is needed.
+
+
+## Owner's second offline run: invariant correction and listener relocation — 2026-10-16
+
+The owner executed `trace_k0_slot130_parameters.ps1` successfully.
+All **5/5** new synthetic tests passed. The existing **1,204
+K0 frames** show **exactly the same integer subtraction in every
+individual frame** of the 12-second recording:
+
+```text
+C0: 301/301, raw slot122 - computed slot130 = 225997 ns
+C3: 301/301, raw slot122 - computed slot130 = 225997 ns
+C4: 301/301, raw slot122 - computed slot130 = 225997 ns
+C5: 301/301, raw slot122 - computed slot130 = 225997 ns
+all channels: unique=1, adjacent transitions=0, min=median=max=225997 ns
+```
+
+Thus `slot130 = slot122 - 225997ns` **for this recording**, not
+a universal hard-coded value guaranteed across exposures, devices,
+power cycles, cameras, or firmware versions. From the native formula,
+the observed aggregate of camera config A and the signed product B*E
+is `225997-52000=173997ns` for all observed frames; that fact
+does not yet separately identify A, B, or E, nor the actual instant
+of optical exposure.
+
+The disassembly also confirms how the QuickCamera listener is stored:
+
+```asm
+# PvrCameraDevice::setPvrImageListener(shared_ptr<PvrImageListener>)
+0x6502c: ldr x19,[x0,#0x38]
+0x65030: stp x9,x8,[x0,#0x30]   // listener object and shared ownership
+
+# PvrCameraFrame::processCameraFrame() callback dispatch
+0x666d4: ldr x0,[x8,#0x30]   // listener object from device
+0x666d8: ldr x8,[x0]         // vptr
+0x666dc: ldr x8,[x8,#0x10]   // virtual method at +0x10
+0x666e0: blr x8              // frame descriptor passed in x1
+```
+
+The service's real, ELF-relocated vtable has:
+- `_ZTVN3pvr13CameraManager19CameraImageListenerE` at
+  `0x15e690` (length `0x30`).
+- `R_AARCH64_ABS64` at `0x15e6b0` →
+  `pvr::CameraManager::CameraImageListener::onFrameAvailable(pvr_frame_item_t*)`
+  at **`0xabbfc`**.
+- `R_AARCH64_ABS64` at `0x15e6b8` →
+  `CameraImageListener::onError(int)` at `0xabc64`.
+- Two earlier `R_AARCH64_RELATIVE` vtable entries
+  `0x15e6a0` and `0x15e6a8`, which may be destructor entries.
+- `R_AARCH64_GLOB_DAT` at `0x163370` referencing the vtable.
+
+With the expected Itanium-style vptr address point at
+`0x15e6a0`, a virtual call at `vptr+0x10` resolves to
+`0x15e6b0`, exactly the `onFrameAvailable` method. This is a
+**concrete callback interface match**, and strengthens a
+QuickCamera→CameraManager producer connection. It still remains to
+prove that the runtime `PvrCameraDevice` uses this specific
+`CameraImageListener` instance for the four observed K0 rings;
+the presence of another potential listener implementation makes
+source-level listener registration and active branch relevant.
+
+The service `onFrameAvailable(int,pvr_frame_item_t*)` at
+`0xaae80–0xaaeac` computes the adjustable K0 +130 timestamp,
+then calls `writeToSm` at `0xaaef4` (and possibly another
+branch at `0xaab5c`). Those native formulas and ring-field
+offsets remain as previously proven.
+
+**No need to keep Pico powered on** for continuing this static
+ELF/replay stage. The owner can use a separate Pimax Crystal
+headset while Pico is off. Next hardware-dependent phase (true
+camera exposure epoch, per-camera optics/extrinsics, synchronization
+with live SteamVR poses) is explicitly deferred until Pico returns.
+
+Safety: no PFR1 timestamps were rewritten; `exact_time=false`
+and all Lighthouse live-correction gates stay blocked. All raw
+hardware captures and ELF binaries remain private and local.
