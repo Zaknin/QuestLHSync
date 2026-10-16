@@ -1147,3 +1147,94 @@ their absolute tick readings across separately restarted devices,
 sleep states or firmware builds. This new probe has NOT been compiled
 or executed on the owner's Windows/Android devices as of this commit.
 No time offset is installed, all P2/P3 gates remain OBSERVE ONLY.
+
+
+### P2 QTIMER clock owner measurement: CNTVCT matches `dumpsys qtimer` — 2026-10-16
+
+The owner's first real `capture_qtimer_counter.ps1` run **compiled
+with NDK 27.2 and `-Werror`**, pushed, chmod'd and executed
+the read-only counter probe; 8/8 hardware-counter samples succeeded.
+`CNTFRQ_EL0 = 19,200,000 Hz`. PVR `dumpsys` before and after:
+
+```text
+before: BOOTTIME=258399539184385 MONOTONIC=239781322924363 QTIMER=258404285687656
+after:  BOOTTIME=258400733317457 MONOTONIC=239782517057644 QTIMER=258405479820937
+```
+
+Their PVR QTIMER-minus-BOOTTIME values were **4746503271 ns**
+and **4746503480 ns**. The hardware `CNTVCT * 1e9/CNTFRQ`
+minus BOOTTIME values in the eight-sample run were
+`[4746502933,4746502907,4746503037,4746502986,4746503012,
+4746502933,4746503037,4746503064]` ns, median **4746502999 ns**,
+range **157 ns**, within **272–481 ns** of the PVR readings.
+Both are independently time-bracketed using standard POSIX clocks.
+This is conclusive practical confirmation that Pico PVR's
+`qtimer` is the architectural CNTVCT-derived nanosecond clock
+(on this firmware, in this session). It is NOT by itself proof that
+the **Camera2 AImage** timestamp was generated from that clock.
+
+The user asked to continue toward better physical frame timestamps
+than the original Quest Pro poll-time approach. The original upstream
+`CreoleVR/QuestLHSync` Quest Pro backend uses buffer detection
+`CLOCK_MONOTONIC` and grid-based poll-lag modeling; our fork
+currently similarly emits `copied_ns /1000` in `F` and keeps
+`exact_time_=false`. A lower-latency sensor-clock approach is
+potentially better but only once its source/epoch and pose clock
+semantics are independently verified, as in the upstream
+Steam Frame/Galaxy XR path.
+
+### P2 shadow QTIMER→MONOTONIC simulation — offline-only implementation
+
+New `pico/tools/audit_shadow_k0_time.py` does a testable candidate
+**per-frame** clock-domain mapping without changing live data:
+
+```text
+At the K0 row's measured BOOTTIME t, interpolate between bracketing
+PVR snapshots:
+  q_minus_mono(t) = qtimer(t) - monotonic(t)
+  b_minus_mono(t) = boottime(t) - monotonic(t)
+  candidate_image_mono_ns = K0_vendor_ns - q_minus_mono(t)
+  producer_write_mono_ns = K0_ring_ts84_ns - b_minus_mono(t)
+  candidate_producer_lag = producer_write_mono_ns - candidate_image_mono_ns
+  candidate_reader_age = K0_java_read_mono_ns - candidate_image_mono_ns
+```
+
+No values are written to LHSync F records, SteamVR poses, Pico clocks,
+calibration files or on-device modules. This merely replays the
+already-recorded private P2 data, using integer nanoseconds to avoid
+loss of precision on large monotonic epochs. It validates:
+- the two PVR clock snapshots bracket every K0 sample,
+- all four camera sequences are monotonic, odd and complete,
+- raw `slot+114 == slot+122`, when the column exists,
+- PVR QTIMER offset drift within 2ms,
+- the modeled producer lag lies within 0..100ms,
+- the modeled Java reader age lies within 0..2s,
+- K0 Java BOOTTIME-minus-MONOTONIC agrees within 1ms with
+  the interpolation from PVR dumpsys clocks.
+
+These are **safety and plausibility gates** (arbitrary engineering
+bounds), not a clock-source or exposure-epoch certificate.
+All reports permanently set
+`live_lighthouse_correction_allowed=false`;
+any failed gate yields `QTIMER_SHADOW_REJECTED_OR_INCOMPLETE`.
+Seven synthetic unit-test cases are included (pass/fail,
+outside bracket, high drift, wrong slot timestamp, excessive lag,
+bad reader age, signed interpolation).
+
+No new HMD capture is necessary. Reuse the existing owner-recorded
+private folder `pico/build/qtimer-p2-private-20261016-204644`:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git switch feature/pico-support
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\replay_shadow_k0_time.ps1
+```
+
+The wrapper runs the previous six plus new seven synthetic tests,
+chooses the newest `qtimer-p2-private-*` recording, and writes
+`shadow.json` into that **private local folder**. The new code has
+not been run on the owner's Windows machine yet. Do not change
+`pico/src/lhsight_pico.c` to use raw, shadow, or corrected vendor time
+or set `exact_time_=true` until physical exposure-source proof and
+independent SteamVR-pose timestamp alignment are established.
