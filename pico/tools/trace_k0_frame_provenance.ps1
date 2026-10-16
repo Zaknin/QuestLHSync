@@ -43,7 +43,8 @@ $sections = @(
     @{ Name='05-PvrImageReaderListener-ProcessFrame'; Binary=$camera; From='0x3fca8'; To='0x40000' },
     @{ Name='06-QuickCamera-Dequeue-And-Metadata'; Binary=$camera; From='0x66620'; To='0x66734' },
     @{ Name='07-CameraManager-WriteToSm-MAIN-image-ring'; Binary=$service; From='0xab634'; To='0xab988' },
-    @{ Name='08-CameraManager-WriteToExpSm-SEPARATE-exposure-ring'; Binary=$service; From='0xacd04'; To='0xace04' }
+    @{ Name='08-CameraManager-WriteToExpSm-SEPARATE-exposure-ring'; Binary=$service; From='0xacd04'; To='0xace04' },
+    @{ Name='09-CameraManager-OnFrameAvailable-Dispatch'; Binary=$service; From='0xaa8f4'; To='0xaac50' }
 )
 # These are narrow deterministic extraction windows, not the full function
 # bodies. For multiple versions, SHA validation above MUST precede them.
@@ -59,14 +60,19 @@ foreach ($part in $sections) {
     $result | Set-Content -LiteralPath $destination -Encoding utf8
     Write-Host ("=== {0} ===" -f $part.Name)
     # Print key short blocks; full bounded disassembly is saved beside the ELFs.
-    $result | Select-Object -Skip 3 -First 70
+    if ($part.Name -like '07-*' -or $part.Name -like '02-*' -or $part.Name -like '09-*') {
+        # These paths contain the actual timestamp routing; do not truncate them.
+        $result | Select-Object -Skip 3
+    } else {
+        $result | Select-Object -Skip 3 -First 35
+    }
 }
 # 0x3a8e4 references a string literal: dump the rodata backing the
 # vsnprintf formatting call, to avoid mistaking logging for synchronization.
 $rodata = @(& $objdump '-s' '--start-address=0x254c0' '--stop-address=0x25550' $camera)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect callback format string' }
-$rodata | Set-Content -LiteralPath (Join-Path $dir '09-Callback-Format-String.txt') -Encoding utf8
-Write-Host '=== 09-CameraReader-Callback-Format-String (rodata hex + ASCII) ==='
+$rodata | Set-Content -LiteralPath (Join-Path $dir '10-Callback-Format-String.txt') -Encoding utf8
+Write-Host '=== 10-CameraReader-Callback-Format-String (rodata hex + ASCII) ==='
 $rodata | Select-Object -First 28
 
 Write-Host "COMPLETE: offline-only static evidence in $dir"
