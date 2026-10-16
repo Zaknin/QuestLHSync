@@ -926,3 +926,24 @@ This session may refute the hypothesis. A promising
 to shift `F` frame records or to enable P3 tracking corrections.
 The old exact numbers are historic and must not be treated as
 current clock offsets. Keep any generated timestamp recordings private.
+
+
+For simpler Windows operation, the checked-in opt-in PowerShell 7 wrapper
+`pico/tools/capture_qtimer_bridge.ps1` executes the exact private,
+read-only sequence above (first runs six synthetic Python tests), and
+prints the JSON audit plus output directory:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git switch feature/pico-support
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\capture_qtimer_bridge.ps1
+```
+
+Use `-Seconds 20` for a longer interval. The wrapper does not copy
+private files to GitHub or Google Drive, and does not alter the normal
+Pico reader's live frame stream. The QTIMER hypothesis only strengthens
+if both dumpsys snapshots bracket the K0 producer BOOTTIME epoch,
+their QTIMER offset is stable, and all four camera gaps give plausible
+positive apparent lag. Any mismatch is diagnostic evidence against
+the current interpretation, not an invitation to fit another offset.
