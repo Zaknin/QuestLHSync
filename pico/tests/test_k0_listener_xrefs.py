@@ -64,6 +64,14 @@ class ListenerAuditTests(unittest.TestCase):
         )
         self.assertFalse(vtable_target(wrong))
 
+    def test_relocation_wrong_target_rejected(self):
+        wrong_target = (
+            "000000000015e6b0  0000054700000101 R_AARCH64_ABS64 "
+            "00000000000abc64 _ZN3pvr13CameraManager19CameraImageListener"
+            "16onFrameAvailableEPNS_16pvr_frame_item_tE + 0"
+        )
+        self.assertFalse(vtable_target(wrong_target))
+
     def test_sha256_streaming(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "fixture.bin"
