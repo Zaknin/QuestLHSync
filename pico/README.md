@@ -2023,10 +2023,10 @@ is verified.
 
 New conservative, SHA-pinned, **offline only**
 `pico/tools/audit_k0_literal_references.py` locates
-static ADRP+load references to **both** ROM pairs
+static ADRP+load or ADRP+ADD references to **both** ROM pairs
 and prints function-level context without claiming
-branch execution. Seven new parser tests accompany it;
-`trace_k0_literal_references.ps1` runs **13 total** tests
+branch execution. Eight new parser tests accompany it;
+`trace_k0_literal_references.ps1` runs **14 total** tests
 and saves full candidate XREFs locally:
 
 ```powershell
