@@ -49,7 +49,7 @@ try {
     $hits = @($sym | Select-String -Pattern 'pvr::ConfigManager::|pvr::CameraManager::|exposure|Exposure|Timestamp|timestamp' | ForEach-Object { $_.Line })
     $hits | Set-Content -LiteralPath (Join-Path $dir '05-configmanager-camera-symbols.txt') -Encoding utf8
     $hits | Where-Object { $_ -match 'ConfigManager::|exposure|Exposure|Timestamp|timestamp' } | Select-Object -First 50 | ForEach-Object {
-        if ($_.Length -gt 220) { Write-Host $_.Substring(0,220) } else { Write-Host $_ }
+        if ($_.Length -gt 220) { Write-Host ($_.Substring(0,220)) } else { Write-Host $_ }
     }
     Write-Host "Saved $($hits.Count) matching ELF symbol lines privately."
     Write-Host 'Do NOT infer ConfigManager coefficients are used by active K0 without setter/assignment proof.'
