@@ -22,3 +22,9 @@ INVENTORY_READY means only that matching library names, paths, hashes and P2 PVR
 First live USB+Wi-Fi connected run returned BLOCKED with `/system/bin/sh: syntax error: unexpected 'do'`. This is a client-side quoting defect: `adb shell su -c <multiple words>` does not supply the entire script as one argument to `su -c`. The `root_shell()` wrapper now applies `shlex.quote(command)` before adb reconstructs its remote command; the inventory scan also searches only `*.so`, avoiding unnecessary non-library path output. New mock tests cover nested quotes, a for/do script and a full read-only inventory.
 
 The previous BLOCKED evidence is retained on TrueNAS. The source fix is verified by GitHub readback, but the correction still requires a new owner Windows/Pico run. No change to the P2 optical gates or producer event semantics.
+
+## 2026-10-17 P3-A ABI-aware inventory correction
+
+The first real corrected run scanned 4079 ELF paths and returned PARTIAL because Android installs both /system/lib and /system/lib64 copies of libpvrtrackingcamera.so. That is an inventory-tool assumption failure, not evidence of an inconsistent firmware. The tool now hashes *all discovered PVR candidate paths* and accepts exactly one that matches the pinned P2 SHA-256; only then does it select lib64 peer dependencies. For a matching AArch64 P2 ELF it inventories and hashes all same-ABI /system/lib64 and /vendor/lib64 copies of QuickCamera direct dependencies, plus previously discovered /vendor/lib64 quickcamera.core.so and HIDL -impl.so. Every candidate path remains explicit: no inference that any particular system/vendor copy was loaded at runtime.
+
+Pico model A8110 observed build fingerprint: Pico/Phoenix_ovs/PICOA8110:10/5.11.2/smartcm.1725996131:user/dev-keys. Hardware and clock provenance remain UNKNOWN. Previous PARTIAL evidence stays on TrueNAS, not deleted.

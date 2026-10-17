@@ -99,22 +99,54 @@ def inventory(serial):
         result['p2_pinned_dt_needed'] = needed
         matches = match_paths(needed + ['libpvrtrackingcamera.so'], paths)
         result['exact_matches'] = matches
-        if len(matches['libpvrtrackingcamera.so']) != 1:
-            raise RuntimeError('Installed libpvrtrackingcamera.so missing or ambiguous')
-        cam = matches['libpvrtrackingcamera.so'][0]
-        actual_sha = digest_line(root_shell(serial, 'sha256sum ' + cam, timeout=30))
-        result['device_pvr_camera_sha256'] = actual_sha
-        result['p2_sha_match'] = actual_sha == CAMERA_SHA
-        if actual_sha != CAMERA_SHA:
-            raise RuntimeError('Installed PVR camera SHA differs from P2 binary')
+        # Android legitimately installs 32-bit and 64-bit copies.
+        # The *hash*, rather than an assumed system/vendor path, identifies
+        # the exact native P2 ELF. Do not allow 32-bit lookalikes or duplicates.
+        pvr_paths = matches['libpvrtrackingcamera.so']
+        if not pvr_paths:
+            raise RuntimeError('Installed PVR camera library not discovered')
+        result['pvr_candidate_hashes'] = {}
+        for p in pvr_paths:
+            result['pvr_candidate_hashes'][p] = digest_line(
+                root_shell(serial, 'sha256sum ' + p, timeout=30))
+        exact = sorted(p for p, sha in result['pvr_candidate_hashes'].items()
+                       if sha == CAMERA_SHA)
+        result['p2_exact_camera_paths'] = exact
+        result['p2_sha_match'] = len(exact) == 1
+        if len(exact) != 1:
+            raise RuntimeError('P2 SHA-256 must match exactly one installed PVR camera ELF')
+        cam = exact[0]
+        result['device_pvr_camera_sha256'] = result['pvr_candidate_hashes'][cam]
+        # The native P2 disassembly used AArch64. Reject a surprising ABI.
+        if '/lib64/' not in cam:
+            raise RuntimeError('P2 matching PVR ELF is not in a lib64 directory')
+        abi_marker = '/lib64/'
+        result['p2_matching_abi'] = 'lib64'
+        # Exact QuickCamera dependencies: inspect every installed same-ABI
+        # variant, retaining system/vendor duplicates for later resolution.
+        result['same_abi_dependency_paths'] = {
+            name: sorted(p for p in matches[name] if abi_marker in p)
+            for name in needed
+        }
+        # Also inventory *observed* HIDL impl/core producer candidates.
+        extra = sorted(p for p in candidates
+                       if abi_marker in p and
+                       (p.endswith('/quickcamera.core.so') or
+                        ('quickcamera' in p.lower() and p.endswith('-impl.so'))))
+        result['additional_producer_candidates'] = extra
+        all_producer_paths = sorted(set(extra + [
+            p for group in result['same_abi_dependency_paths'].values()
+            for p in group
+        ]))
         result['producer_hashes'] = {}
-        for name in needed:
-            if not matches[name]:
-                result['errors'].append('Not found: ' + name)
-            for p in matches[name]:
-                result['producer_hashes'][p] = digest_line(root_shell(serial, 'sha256sum ' + p, timeout=30))
-                if result['producer_hashes'][p] is None:
-                    result['errors'].append('No device SHA256: ' + p)
+        for name, group in result['same_abi_dependency_paths'].items():
+            if not group:
+                result['errors'].append('No same-ABI DT_NEEDED path: ' + name)
+        for p in all_producer_paths:
+            sha = digest_line(root_shell(serial, 'sha256sum ' + p, timeout=30))
+            result['producer_hashes'][p] = sha
+            if sha is None:
+                result['errors'].append('No device SHA256: ' + p)
         result['status'] = 'INVENTORY_READY' if not result['errors'] else 'PARTIAL'
     except (Exception, KeyboardInterrupt) as exc:
         result['errors'].append(type(exc).__name__ + ': ' + str(exc)[:350])

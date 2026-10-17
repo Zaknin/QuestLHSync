@@ -61,8 +61,13 @@ class InventoryTest(unittest.TestCase):
                                  ['su', '-c', script])
 
     def test_inventory_happy_path_uses_only_reads(self):
-        cam = '/system/lib64/libpvrtrackingcamera.so'
-        producer = '/vendor/lib64/vendor.test.quickcamera@1.0.so'
+        cam32 = '/system/lib/libpvrtrackingcamera.so'
+        cam64 = '/system/lib64/libpvrtrackingcamera.so'
+        prod_system = '/system/lib64/vendor.test.quickcamera@1.0.so'
+        prod_vendor = '/vendor/lib64/vendor.test.quickcamera@1.0.so'
+        core = '/vendor/lib64/quickcamera.core.so'
+        impl = '/vendor/lib64/hw/pico.camera.quickcameramodule@1.0-impl.so'
+        listing = '\n'.join((cam32, cam64, prod_system, prod_vendor, core, impl))
         calls = []
         def fake_adb(serial, *args, timeout=120):
             calls.append(args)
@@ -76,21 +81,40 @@ class InventoryTest(unittest.TestCase):
             if command == 'id':
                 return 'uid=0(root) gid=0(root)'
             if command.startswith('for d in '):
-                return cam + '\n' + producer
-            if command == 'sha256sum ' + cam:
-                return m.CAMERA_SHA + '  ' + cam
-            if command == 'sha256sum ' + producer:
-                return 'a'*64 + '  ' + producer
+                return listing
+            if command.startswith('sha256sum '):
+                path = command[len('sha256sum '):]
+                sha = m.CAMERA_SHA if path == cam64 else 'a'*64
+                return sha + '  ' + path
             raise AssertionError('Unexpected root command: ' + command)
         with patch.object(m, 'adb', side_effect=fake_adb), \
              patch.object(m, 'root_shell', side_effect=fake_root), \
-             patch.object(m, 'pinned_needed', return_value=[producer.rsplit('/',1)[1]]):
+             patch.object(m, 'pinned_needed', return_value=[prod_system.rsplit('/',1)[1]]):
             result = m.inventory('test:5555')
         self.assertEqual(result['status'], 'INVENTORY_READY')
-        self.assertEqual(result['device_pvr_camera_sha256'], m.CAMERA_SHA)
-        self.assertEqual(result['producer_hashes'][producer], 'a'*64)
+        self.assertEqual(result['p2_exact_camera_paths'], [cam64])
+        self.assertEqual(result['pvr_candidate_hashes'][cam32], 'a'*64)
+        self.assertEqual(result['p2_matching_abi'], 'lib64')
+        self.assertEqual(len(result['same_abi_dependency_paths'][prod_system.rsplit('/',1)[1]]), 2)
+        self.assertEqual(result['additional_producer_candidates'], [impl, core])
+        self.assertEqual(len(result['producer_hashes']), 4)
         self.assertFalse(result['producer_timestamp_proven'])
         self.assertTrue(all(c[0] in ('get-state', 'shell', 'root') for c in calls))
+
+    def test_missing_sha_match_stays_partial(self):
+        cam32 = '/system/lib/libpvrtrackingcamera.so'
+        cam64 = '/system/lib64/libpvrtrackingcamera.so'
+        with patch.object(m, 'adb', side_effect=lambda *a, **kw:
+                          'device' if a[1:] == ('get-state',) else 'Pico'), \
+             patch.object(m, 'root_shell', side_effect=lambda s, cmd, **kw:
+                          'uid=0(root)' if cmd == 'id' else
+                          cam32 + '\n' + cam64 if cmd.startswith('for d in ') else
+                          'f'*64 + '  ' + cmd[len('sha256sum '):]), \
+             patch.object(m, 'pinned_needed', return_value=['test.quickcamera.so']):
+            result = m.inventory('test:5555')
+        self.assertEqual(result['status'], 'PARTIAL')
+        self.assertFalse(result['p2_sha_match'])
+        self.assertFalse(result['producer_timestamp_proven'])
 
     def test_scan_only_existing_root_names(self):
         self.assertTrue(all(d.startswith('/') and not d.endswith('.so') for d in m.ROOTS))
