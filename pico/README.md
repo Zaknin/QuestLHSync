@@ -2082,3 +2082,38 @@ caution are recorded in
 After this targeted check, focus on the raw camera
 timestamp's hardware event and SteamVR pose clock.
 `OBSERVE ONLY`; `exact_time=false`.
+
+
+### P2 coefficient study closeout; P3 clock-provenance gate — 2026-10-17
+
+The owner ran `trace_k0_configmanager_q2.ps1` successfully,
+**14/14** previously established unit tests PASS.
+Additional real static source evidence establishes the
+alternate pair `0x73160` (B=19333, A=135331) is
+stored at `ConfigManager+0xA0` by
+`ConfigManager::getInstance()` (q2 load at 0xa24b0,
+q2 store at 0xa24e8) and
+`ConfigManager::ConfigManager()` (load at 0xa25e4,
+store at 0xa2628). `CameraManager` independently
+constructs per-camera A/B from `0x73170`;
+a ConfigManager-to-CameraManager assignment has NOT
+been proven. This is not a verified active runtime
+profile or physical exposure event.
+
+The investigation of the 2,376-ns alternative timing
+pair discrepancy is provisionally complete.
+The remaining P2/P3 blockers are producer provenance
+of the QuickCamera first `FrameMetaDate` word,
+the actual optical event represented, and Pico-to-PC
+OpenVR/SteamVR pose clock synchronization. While Pico
+is powered off, we can work on the PC-side OpenVR
+pose/QPC timing methodology without changing any
+live headset or VR driver state.
+
+The **source-grounded evidence matrix, required missing
+QuickCamera dependencies, staged read-only tests and
+safe deployment gates** are now centralized in:
+[`P2-Closeout-P3-Clock-Provenance-20261017.md`](research/P2-Closeout-P3-Clock-Provenance-20261017.md).
+
+No Pico boot/re-capture is required at this stage.
+`OBSERVE ONLY`; `exact_time=false`.
