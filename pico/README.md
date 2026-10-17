@@ -1995,3 +1995,48 @@ clock event** and SteamVR **pose clock mapping**,
 not artificially enforcing microsecond-perfect
 agreement while exposure semantics are unknown.
 All live corrections remain disabled.
+
+
+### P2: exact ROM coefficient pair reproduces K0 225997-ns adjustment — 2026-10-17
+
+Owner's `scan_k0_alternate_constants.ps1` completed
+with **15/15 tests PASS**. Offline SHA-pinned ELF scan
+found **one** aligned 16-byte B/A pair in the ELF's
+file-backed R-only segment that mathematically matches
+the recorded correction:
+
+```text
+VA 0x73160: B=19333 A=135331  => 52000 + A + 2B = 225997 ns
+VA 0x73170: B=19069 A=133483  => 52000 + A + 2B = 223621 ns
+ROM pair delta: B+=264 A+=1848 => 2376ns exact difference
+```
+
+This is compelling evidence of an adjacent alternative
+constant pair, but it is NOT proof that runtime selects
+the `0x73160` pair. The actual constructor's q1 load
+at `0xa7198` targets `0x73170`. There must be an
+instruction-level source XREF and branch/profile
+provenance before asserting any runtime override.
+Exact numerical coincidence alone is insufficient.
+No physical exposure event or live clock conversion
+is verified.
+
+New conservative, SHA-pinned, **offline only**
+`pico/tools/audit_k0_literal_references.py` locates
+static ADRP+load references to **both** ROM pairs
+and prints function-level context without claiming
+branch execution. Seven new parser tests accompany it;
+`trace_k0_literal_references.ps1` runs **13 total** tests
+and saves full candidate XREFs locally:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_literal_references.ps1
+```
+
+This new script has not yet run on owner's Windows;
+no Pico, Android, SLAM, SteamVR or `exact_time` changes.
+After determining literal-use provenance, prioritize
+hardware time origin and LH/SteamVR pose clock mapping
+over further microsecond-scale profile tuning.
