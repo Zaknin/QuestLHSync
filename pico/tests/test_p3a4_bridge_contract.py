@@ -12,7 +12,7 @@ class BridgeContractTests(unittest.TestCase):
         cls.src = SCRIPT.read_text(encoding='utf-8')
 
     def test_read_only_no_device_commands(self):
-        self.assertNotRegex(self.src.lower(), r'\badb\b|\bfastboot\b|\bmagisk\b')
+        self.assertNotRegex(self.src, r'(?mi)^\s*(?:&\s*)?(?:adb|fastboot|magisk)(?:\.exe)?\s')
         self.assertIn('NO ADB', self.src)
 
     def test_immutable_p2_and_p3_source_hashes(self):
