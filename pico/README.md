@@ -1933,3 +1933,65 @@ documented in
 Tools have **not yet been run** on owner's PC.
 No headset required; `OBSERVE ONLY` and all
 `exact_time` and Lighthouse correction gates stay CLOSED.
+
+
+### P2 actual K0 coefficient initialization differs from observed frames — 2026-10-17
+
+Owner ran `verify_k0_q1_coefficients.ps1` successfully:
+**15/15 synthetic tests PASS**; local SHA-pinned service ELF
+literal at `0x73170` is
+`7d4a0000000000006b09020000000000`, encoding signed
+`B_init=19069`, `A_init=133483`.
+With the observed `E=4`, the exact native
+`slot122-slot130` expression computes
+`52000 + A_init + 2*B_init = 223621 ns`.
+But the **real K0 capture has 225997 ns** on
+every one of the 1204 recorded frames. This is
+an exact **+2376 ns (2.376 microsecond)** difference,
+not a rounding or unit error:
+
+```text
+B_init = 19069; A_init = 133483
+A_init + 2*B_init = 171621ns
+A_runtime + 2*B_runtime = 173997ns  [assuming same native writer]
+delta_A + 2*delta_B = +2376ns
+```
+
+The constructor/source-field address correspondence
+is proven, but actual live coefficient values,
+post-initialization overrides, and exposure semantics
+remain **UNVERIFIED**. Don't claim that either
+`A+=2376` or `B+=1188` specifically happened.
+Source reconstruction and empirical ring timestamps
+MUST both be respected; the mismatch is meaningful
+for provenance but tiny compared with the separate,
+still-unresolved multi-millisecond exposure/producer
+timestamp alignment.
+
+A small offline supplementary check is committed:
+`pico/tools/audit_k0_alternate_constants.py` scans
+only **read-only, non-executable, file-backed** ELF
+`PT_LOAD` ranges for aligned `(B,A)` signed-64
+pairs that would yield the observed 225997ns
+adjustment. Matches, if any, are *candidates*,
+NOT proofs of use at runtime. Six synthetic
+tests verify bounds, alignment, and exclusion
+of writable/executable data. Run with no Pico:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\scan_k0_alternate_constants.ps1
+```
+
+The runner executes **15 tests** (9 existing q1
+tests + 6 new static-literal tests), checks the
+saved service SHA256, and writes a private
+`p2-alternate-timing-literals.json` report.
+It has NOT yet been run on owner's Windows.
+The larger next project priority is proving
+QuickCamera `FrameMetaDate`'s **raw hardware
+clock event** and SteamVR **pose clock mapping**,
+not artificially enforcing microsecond-perfect
+agreement while exposure semantics are unknown.
+All live corrections remain disabled.
