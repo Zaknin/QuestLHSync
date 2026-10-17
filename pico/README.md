@@ -2117,3 +2117,34 @@ safe deployment gates** are now centralized in:
 
 No Pico boot/re-capture is required at this stage.
 `OBSERVE ONLY`; `exact_time=false`.
+
+
+### Handover to new Pico4 Stuff conversation — P3 start, 2026-10-17
+
+P2 is closed at the level of available static/source evidence;
+the measured 2,376-ns discrepancy between CameraManager
+constructor defaults and captured K0 timestamps is fully
+documented. The alternative ConfigManager pair matching
+the observed correction is stored at ConfigManager+0xA0,
+but transfer to the active CameraManager camera fields
+and optical capture event remain unverified.
+
+For the **next conversation in the same ChatGPT project**,
+read these two maintained Markdown artifacts first:
+
+- [**Full P2→P3 technical handover**](research/P2-to-P3-FULL-HANDOVER-20261017.md):
+  hardware contract, P1 source/transport, 1,204-frame
+  evidence, exact ELF addresses and checksums,
+  completed tests, private evidence locations,
+  fail-closed gates and P3 experiment plan.
+- [**P3 new-chat starter prompt**](research/P3-NEW-CHAT-STARTER-20261017.md):
+  concise instructions for preserving source provenance
+  and beginning an opt-in, host-only Windows
+  OpenVR/QueryPerformanceCounter timing probe.
+
+Pico 4 Pro can remain off while the Windows/Pimax
+host-only probe is developed. The original
+[closeout and P3 gates](research/P2-Closeout-P3-Clock-Provenance-20261017.md)
+continue to govern deployment. **No live driver, camera,
+SLAM, F timestamp or factory calibration changes** have
+been authorized. `OBSERVE ONLY`; `exact_time=false`.
