@@ -58,7 +58,7 @@ class BridgeContractTests(unittest.TestCase):
         self.assertIn('PVR exact symbol resolution failed', self.src)
         self.assertIn('PVR symbol size/address unsafe', self.src)
         self.assertIn('pvr_exact_targets', self.src)
-        self.assertIn('p3a4.offline.bridge.v2', self.src)
+        self.assertIn('p3a4.offline.bridge.v3', self.src)
         self.assertNotIn("Name=('09-pvr-symbol-' + $n)", self.src)
 
     def test_symbol_capture_is_in_exact_function_bounds(self):
