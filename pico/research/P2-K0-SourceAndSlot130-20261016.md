@@ -770,3 +770,68 @@ Gate status: `constructor_A_B_read=PROVEN`,
 `physical_exposure=UNVERIFIED`,
 `SteamVR_clock_alignment=UNVERIFIED`,
 `live_lighthouse_correction_allowed=false`.
+
+
+## 2026-10-17: exact-match adjacent ROM pair discovered (15/15 PASS)
+
+The owner ran `scan_k0_alternate_constants.ps1` successfully
+after pulling `28453d2`. **All 15 synthetic tests PASS**.
+The SHA-pinned service ELF search examined **one readable-only,
+non-writable, non-executable, file-backed PT_LOAD segment**,
+with one aligned literal pair predicting the observed K0
+correction:
+
+```text
+ELF VA        B       A      fixed+2*B+A  vs K0 observed
+0x73170     19069  133483     223621 ns  -2376 ns  [constructor q1]
+0x73160     19333  135331     225997 ns       0 ns  [new ROM candidate]
+difference   +264   +1848      +2376 ns
+```
+
+This is an unusually strong *static* alternative timing
+profile candidate: the two 16-byte pairs are adjacent,
+and `0x73160` mathematically reproduces the **exact**
+225997-ns subtraction seen on **all 1,204 accepted K0
+frames**, with \(E=4\). But there is a critical distinction:
+
+- VERIFIED: the exact two ROM pairs exist and one matches
+  the real measured timestamp adjustment.
+- VERIFIED: the constructor's particular `ldr q1` at
+  `0xa7198` reads **0x73170**, not 0x73160.
+- **UNVERIFIED**: code actually references 0x73160, and
+  whether that code selects an active sensor profile,
+  overwrites A/B later, or represents a different
+  structure entirely. Numerical agreement alone does
+  not prove any runtime selection.
+- Still UNVERIFIED: the QTIMER hardware event, optical
+  shutter/exposure meaning, and SteamVR pose clock
+  alignment. The 2.376-us discrepancy is secondary to
+  larger unknown physical time offsets.
+
+One final focused offline test has been added:
+`pico/tools/audit_k0_literal_references.py` searches the
+**complete disassembly of the same SHA-pinned service
+ELF** for candidate AArch64 `ADRP` + indexed loads
+from VA 0x73160 and 0x73170, with register invalidation
+for detected clobbers/calls; it records owner functions
+and surrounding instructions without assuming that a
+matched instruction was executed at runtime. `0x73170`
+is a positive control from the verified constructor.
+`pico/tests/test_k0_literal_references.py` has **seven**
+synthetic regression cases; the wrapper
+`pico/tools/trace_k0_literal_references.ps1` runs
+those seven plus the existing six static-literal tests
+(**13 expected**) and saves a detailed private JSON
+report of every candidate reference.
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_literal_references.ps1
+```
+
+If no reference is found, the tool does not prove the
+literal unused: alternate address-generation patterns,
+jumping into the middle of a literal region, inlined
+copies, or other code paths may evade this conservative
+scanner. **No HMD needed; OBSERVE ONLY; exact_time=false.**
