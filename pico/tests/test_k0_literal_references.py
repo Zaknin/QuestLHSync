@@ -64,6 +64,18 @@ class LiteralReferenceTests(unittest.TestCase):
 """
         self.assertEqual(find_pc_relative_refs(code), [])
 
+    def test_adrp_add_address_formation_is_candidate_only(self):
+        code = """
+00000000000a1000 <pvr::CameraManager::profile()>:
+  a1000: adrp x8, 0x73000
+  a1004: add x0, x8, #0x160
+"""
+        hits = find_pc_relative_refs(code)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["literal_va"], "0x73160")
+        self.assertEqual(hits[0]["classification"],
+                         "PC_RELATIVE_ADRP_ADD_ADDRESS_CANDIDATE")
+
     def test_unrelated_offset_not_counted(self):
         code = """
 00000000000a1000 <pvr::CameraManager::other()>:
