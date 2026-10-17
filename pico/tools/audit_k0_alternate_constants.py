@@ -59,6 +59,9 @@ def main():
     if hashlib.sha256(blob).hexdigest() != SERVICE_HASH:
         raise ValueError("Wrong pinned firmware hash")
     segments = readonly_segments(blob)
+    anchor_va = 0x73170
+    if not any(va <= anchor_va and anchor_va + 16 <= va + len(data) for va, data in segments):
+        raise ValueError("Known constructor q1 literal not in a RO-only PT_LOAD segment; scan cannot establish absence")
     matches = [pair for va, data in segments for pair in find_pairs(va, data)]
     result = {
         "status": "ALTERNATE_STATIC_LITERALS_ONLY_UNVERIFIED",
