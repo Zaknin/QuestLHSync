@@ -903,3 +903,14 @@ prioritize the larger unknown timestamp event/clock
 domain and Lighthouse pose synchronization instead
 of pursuing the 2.376-us difference indefinitely.
 All live gates remain CLOSED.
+
+
+## Final ConfigManager literal destination: owner run 2026-10-17
+
+Owner ran `trace_k0_configmanager_q2.ps1`; 14/14 existing tests passed. The assembly demonstrates that ConfigManager::getInstance at 0xa24b0 loads q2 from ROM VA 0x73160 and stores it through `stp q1,q2,[x1,#0x90]` at 0xa24e8. ConfigManager::ConfigManager at 0xa25e4 also loads that constant and stores q2 through `stp q1,q2,[x0,#0x90]` at 0xa2628. Therefore the alternative 16-byte pair is initialized at offset +0xa0 of the ConfigManager object in both code paths.
+
+Separately, CameraManager's constructor loads its own default pair from 0x73170 and stores it into camera timing fields (seven blocks, stride 0x320). The new result does not establish any assignment from ConfigManager+0xa0 into CameraManager per-camera A/B. These are real static initialization instructions, not proof of an active alternative profile. The exact numerical match to the 1204 K0 frames remains unassigned at runtime.
+
+The `llvm-objdump --syms` check printed zero matching lines. This does not establish absence of symbols, because stripped static symbol output differs from dynamic symbol output; named functions are already shown by disassembly.
+
+The microsecond coefficient work is now provisionally closed. Remaining essential work: trace the producer of QuickCamera FrameMetaDate's first timestamp, determine its hardware event and clock domain, and establish an independently measured mapping to SteamVR pose timestamps. Until those gates pass, `exact_time=false` and live corrections remain blocked.
