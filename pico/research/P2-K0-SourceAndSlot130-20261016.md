@@ -835,3 +835,71 @@ literal unused: alternate address-generation patterns,
 jumping into the middle of a literal region, inlined
 copies, or other code paths may evade this conservative
 scanner. **No HMD needed; OBSERVE ONLY; exact_time=false.**
+
+
+## 2026-10-17: owner ran ROM source-XREF audit — alternate pair has executable references
+
+Owner pulled `20b51c7` and ran
+`trace_k0_literal_references.ps1` successfully:
+**14/14** regressions passed. The parser found four
+PC-relative candidate references to two adjacent
+16-byte ROM literal pairs; more important than the
+raw count, the two relevant function families differ:
+
+```text
+ELF VA 0x73160: B=19333 A=135331 E=4
+ predicted +130 correction: 225997ns [matches all 1204 frames]
+ 0xa24b0 pvr::ConfigManager::getInstance()    ldr q2,[x8,#0x160]
+ 0xa25e4 pvr::ConfigManager::ConfigManager()  ldr q2,[x10,#0x160]
+
+ELF VA 0x73170: B=19069 A=133483 E=4
+ predicted +130 correction: 223621ns
+ 0xa7198 pvr::CameraManager::CameraManager()  ldr q1,[x9,#0x170]
+ 0xe531c filesystem vector implementation  ldr q0,[x8,#0x170]
+```
+
+The fourth match in unrelated filesystem code
+reinforces why a PC-relative match is not by itself a
+proven camera timestamp call/data path.
+
+**New evidence:** the exact-match `0x73160` pair is
+not dead/unreferenced data: it is loaded directly
+by two `ConfigManager` implementation functions.
+This substantially strengthens the possibility of a
+configuration-provided camera timing override. It does
+**not** show where `ConfigManager` stores `q2`,
+whether `CameraManager` reads that storage, or
+whether the owner's active K0 producer selects the
+same configuration profile.
+
+The next and last narrow source audit for this
+microsecond-scale discrepancy is a SHA-pinned,
+read-only inspection of `ConfigManager::getInstance`
+around 0xa24b0, `ConfigManager::ConfigManager`
+around 0xa25e4, and the previously verified
+`CameraManager` constructor q1 initialization.
+It prints the native code before/after each q2
+load and exports the relevant ConfigManager symbols,
+with the goal of identifying the q2 destination
+and any forwarding interface:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_configmanager_q2.ps1
+```
+
+That tool re-runs the already-passed **14/14**
+offline regression tests, preserves the complete
+source excerpt only in the owner's private
+`p2-static-clock-private-*` evidence folder, and
+never touches the headset. It has NOT been run on
+the owner's Windows checkout.
+
+Keep the distinction between `ConfigManager` default
+or profile constants and **runtime CameraManager A/B**
+strictly explicit. After this source provenance check,
+prioritize the larger unknown timestamp event/clock
+domain and Lighthouse pose synchronization instead
+of pursuing the 2.376-us difference indefinitely.
+All live gates remain CLOSED.
