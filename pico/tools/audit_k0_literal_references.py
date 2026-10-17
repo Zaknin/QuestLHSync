@@ -22,6 +22,7 @@ INSTR = re.compile(r"^\s*([0-9a-f]+):\s+([a-z0-9.]+)\s*(.*?)\s*$")
 ADRP = re.compile(r"^(x\d+),\s*0x([0-9a-f]+)\b", re.I)
 BASE_MEM = re.compile(r"\[\s*(x\d+),\s*#0x([0-9a-f]+)\s*\]", re.I)
 FIRST = re.compile(r"^\s*([wx]\d+)\b", re.I)
+ADD_IMM = re.compile(r"^(x\d+),\s*(x\d+),\s*#0x([0-9a-f]+)\b", re.I)
 
 
 def find_pc_relative_refs(text):
@@ -73,6 +74,18 @@ def find_pc_relative_refs(text):
                             "instruction": line.strip(),
                             "context": [*before, line.strip()],
                             "classification": "PC_RELATIVE_ADRP_LOAD_CANDIDATE",
+                        })
+            add = ADD_IMM.match(args) if op == "add" else None
+            if add:
+                destination, base, immediate = add.groups()
+                page = pages.get(base.lower())
+                for va, (wanted_page, wanted_offset) in PAGES.items():
+                    if page == wanted_page and int(immediate, 16) == wanted_offset:
+                        refs.append({
+                            "at": "0x" + addr, "owner": owner,
+                            "literal_va": hex(va), "instruction": line.strip(),
+                            "context": [*before, line.strip()],
+                            "classification": "PC_RELATIVE_ADRP_ADD_ADDRESS_CANDIDATE",
                         })
             # Most instructions with a first register operand write it;
             # exclude stores/branches/comparisons/CBZ/TBZ.
