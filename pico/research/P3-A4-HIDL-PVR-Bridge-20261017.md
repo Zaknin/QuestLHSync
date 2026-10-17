@@ -46,3 +46,15 @@ Review revealed a **trace-selector defect**, not a PVR issue: four auto-selected
 Version 2 of `trace_p3a4_quickcamera_bridge.ps1` now captures **all seven specific functions in full ELF-symbol extents**, and the eight previous source regions. It resolves by exact mangled-to-demangled ABI-signature patterns, deduplicates duplicate ctor aliases, requires exactly one matching executable symbol per target, and fails closed if size or symbol mismatches. No new device access, no software changes to runtime code, and no producer-origin certification. Expected output is 15 windows and 22 PVR symbol hits on the unchanged P2 SHA-pinned source, but only a real Windows execution can confirm that.
 
 Offline reader hypothesis to check in v2 evidence: whether `QuickCameraClient::DeQueueFrame(void**, FrameMetaDate*)` reads the same metadata bytes at the native shared-buffer base / mapped native handle that `CamQuickAccessDevice::CSLFenceCallback` fills at offset 0. This PVR boundary was **not** established by prior 12-window output. Do not report timestamp producer chain or physical exposure event as PASS before showing the actual loads/stores and pointer origin.
+
+## Owner Windows P3-A4B run: 2026-10-17T19:00:59Z
+
+Commit `fedad8b` (exact-symbol tracer) was pulled on the owner's Windows. `python -m unittest pico.tests.test_p3a4_bridge_contract -v`: 8/8 PASS. Read-only local PowerShell trace: `TRACE_CAPTURED_NOT_PROVEN`, **15 windows**, **22 PVR symbol hits**, no reported errors. Canonical private evidence: `P3-A/p3a4-bridge-20261017T190059Z-2cfc1c9e.zip`, alongside `.json` and `.sha256` sidecar. No ADB and no runtime changes to Pico or SteamVR. The owner has a private SMB copy, but new ZIP bytes were **not yet available through the Drive mirror** at the latest independent check; no bridge inference is attributed to unexamined windows.
+
+Independently rechecked earlier (SHA-validated) private PVR consumer disassembly at `processCameraFrame+0x664e8`:
+- `0x6662c`: `x2=sp+0x10` is the output `FrameMetaDate*`; `0x66634`: PLT call to `QuickCameraClient::DeQueueFrame(void**,FrameMetaDate*)`.
+- `0x6667c`: `ldp x11,x10,[sp,#0x10]` loads metadata u64 at +0 and +8.
+- `0x666a8`: `stp x11,x11,[sp,#0x58]` duplicates first timestamp word to PVR frame item.
+- `0x666b0`: `ldp w12,w9,[sp,#0x20]` reads metadata +0x10 and +0x14; `0x666bc`: first 32-bit value is copied into frame item.
+
+This `FrameMetaDate` layout (+0 timestamp, +8 second u64, +0x10/+0x14 sensor-related fields) **agrees structurally** with the QuickCamera producer buffer record identified in P3-A3. It is **not** proof that the same native/shared buffer is directly copied through the HIDL client. Next review must examine the newly captured three PVR DeQueueFrame overloads and ConfigAndAllocBuffers, including mapped buffer address origin, offset, buffer identity and callback index. The pending physical timestamp/active K0/live-gating claims remain false.
