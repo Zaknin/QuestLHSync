@@ -609,3 +609,108 @@ owner's Windows checkout. It preserves SHA-pinned
 read-only analysis, `OBSERVE_ONLY`,
 `exact_time=false` and the hardware
 exposure/SteamVR gates.
+
+
+## P2 constructor/runtime pointer reconciliation; **actual A/B initializer location** — 2026-10-17
+
+The owner ran `trace_k0_clock_base.ps1`; **12/12** regression
+tests passed. The static read of constructor-related ELF
+constants gave:
+
+```text
+ELF VA 0x736b0 (d8):  000000001e000000 (NOT a standalone A/B)
+ELF VA 0x73748 (d9):  0500000006000000
+ELF VA 0x73738 (d10): 3c000000d4060000
+```
+
+These are raw bit patterns, **not floating-point measurements**;
+the artificial `f64` interpretations are meaningless until
+typed use is established. They must not be mistaken for the
+K0 `slot+130` adjustment coefficient values.
+
+### Major source-derived finding — follow the *other* constructor q1 store
+
+The new prologue proves the frame callback and constructor use
+the **same CameraManager 'this' base**:
+
+```asm
+# CameraManager::CameraManager, at 0xa7120
+mov x20,x0              // this
+
+# CameraManager::onFrameAvailable, at 0xaa924
+mov x19,x0              // this
+sxtw x26,w20            // camera id
+madd x9,x26,0x320,x19  // this + cameraIndex * 0x320
+ldr x10,[x9,#0x330]    // B
+ldr x9, [x9,#0x338]    // A
+```
+
+Earlier constructor stores at `0xa71ec/f0` are **NOT**
+the actual onFrame coefficient fields. They target
+`this+0x70/0x78+0x320*i`. The real matching stores
+occur **later inside the same seven-iteration constructor**:
+
+```asm
+# single 128-bit literal loaded from file-backed VA 0x73170
+0xa717c adrp x9,0x73000
+0xa7198 ldr q1,[x9,#0x170]
+0xa71cc str q1,[sp,#0x30]
+# ...each of 7 iterations of stride 0x320:
+0xa72e4 ldr q1,[sp,#0x30]
+0xa72f0 str q1,[x23,#0x5f0]  // writes 16 contiguous bytes
+0xa72f4 add x23,x23,#0x320
+0xa72fc b.ne 0xa71e0
+```
+
+From the same constructor:
+
+```text
+x23 = this - 0x2c0 + cameraIdx * 0x320
+therefore x23 + 0x5f0 = this + 0x330 + cameraIdx*0x320
+and x23 + 0x5f8 = this + 0x338 + cameraIdx*0x320
+```
+
+Thus **the exact two source fields for native slot+130
+are initialized from the 16-byte q1 literal at ELF VA
+`0x73170..0x7317f`**:
+
+- lower 64-bit word from `VA 0x73170` = `B` initializer;
+- upper 64-bit word from `VA 0x73178` = `A` initializer;
+- same initialization applied to seven blocks.
+
+This is stronger than merely matching field offsets.
+It resolves the constructor/callback base-pointer ambiguity
+at the source-code/ABI level. There may **still be runtime
+setters** that update A and B after construction, so this
+alone is not proof of their live immutable values.
+
+The original 1204-frame data establish
+`slot122 - slot130 = 225997ns` for E=4 on every
+accepted frame. Source-level arithmetic predicts
+`52000 + A + ((B*4) ASR 1)`. The remaining
+straightforward **offline** test is to read the 16 raw
+bytes at **0x73170**, decode both words as signed
+64-bit values, and compare predicted vs observed.
+Do not claim any numeric individual A/B value until
+those bytes have been inspected.
+
+New SHA-pinned, fail-closed `pico/tools/audit_k0_q1_coefficients.py`
+performs the exact comparison, including ARM64 signed
+64-bit wrap arithmetic. Nine synthetic math/offset
+tests are provided in `pico/tests/test_k0_q1_coefficients.py`.
+Wrapper `pico/tools/verify_k0_q1_coefficients.ps1`
+runs those nine plus six earlier constructor tests
+before reading the local saved service ELF and writing
+the result to `p2-q1-timing-coefficients.json`:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\verify_k0_q1_coefficients.ps1
+```
+
+**This new analysis was not yet executed on the owner's Windows.**
+No Pico, ADB, QuickCamera service calls, tracker, calibration,
+`exact_time`, or SteamVR pose modifications involved. All
+physical exposure and QTIMER producer-origin verification gates
+remain CLOSED, irrespective of numerical agreement.
