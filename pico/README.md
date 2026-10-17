@@ -1836,3 +1836,53 @@ It is read-only, no ADB, new captures, tracking,
 live camera correction or SteamVR interaction.
 Full proof tracking in
 [`P2-K0-SourceAndSlot130-20261016.md`](research/P2-K0-SourceAndSlot130-20261016.md).
+
+
+### P2 verified CameraImageListener jump table and 7-slot camera constructor — 2026-10-17
+
+Owner completed `trace_k0_constructor_dispatch.ps1`
+with **13/13 tests passing**. The actual
+`CameraImageListener` switch bytes from the hash-pinned
+`libpvrtrackingservice.so` at `VA 0x73a10`
+are `00 07 0a 0d`. This independently maps
+native callback descriptor indices `0,1,2,3`
+to `CameraManager` camera IDs `0,3,4,5`
+by four concrete branch addresses, matching the
+existing K0 sensor set. Runtime listener assignment
+and physical/factory extrinsic mapping remain
+separate unverified links.
+
+The native `CameraManager` constructor initializes
+seven blocks at 800-byte stride using
+`x23=this-0x2c0`, writes a zero word
+to `x23+0x330=this+0x70` and the raw
+8-byte `d8` value to `x23+0x338=this+0x78`;
+both repeat at `+i*0x320`.
+It loads `d8` from ELF rodata VA `0x736b0`.
+**These are not yet proven to be the same A/B
+actually read by the frame-timing code**, which
+uses `x19+camIdx*0x320+0x330/0x338`.
+The frame callback `x19` base still needs
+verification. The observed 1,204-frame constraint
+`A+2B=173997ns` stands for the runtime
+fields but does not independently identify them.
+
+New offline read-only, SHA-pinned inspection
+`pico/tools/trace_k0_clock_base.ps1`
+runs 12 tests (6 new constructor-literal, 6
+existing listener-table) and reads the exact
+rodata constant bits plus the onFrameAvailable
+prologue to resolve register bases. No Pico
+or ADB required:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_clock_base.ps1
+```
+
+It has **not yet run on the owner's Windows**.
+There are no live clock, camera, SLAM,
+SteamVR or `exact_time` changes.
+Full audit:
+[`P2-K0-SourceAndSlot130-20261016.md`](research/P2-K0-SourceAndSlot130-20261016.md).
