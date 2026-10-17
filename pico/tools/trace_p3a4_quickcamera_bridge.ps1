@@ -34,7 +34,7 @@ $windows = @(
     @{ Name='08-hidl-configuration'; Bin='hidl'; From=0xa59c; To=0xa6a0 }
 )
 $metadata = [ordered]@{
-    schema='p3a4.offline.bridge.v2'
+    schema='p3a4.offline.bridge.v3'
     status='TRACE_CAPTURED_NOT_PROVEN'
     observe_only=$true
     exact_time=$false
@@ -86,6 +86,80 @@ foreach ($target in $pvrTargets) {
         name=$target.Name; symbol=$hits[0]; address=$start; size=$size
     }
 }
+# P3-A4D: decode native C++ callback functor vtable near 0x752c0.
+# ConfigAndAllocBuffers 0x6a3f0/0x6a408 installs this vtable into the
+# callback passed through HIDL; the callback body was not in prior excerpts.
+$readelf = Join-Path (Split-Path -Parent $objdump) 'llvm-readelf.exe'
+if (-not (Test-Path -LiteralPath $readelf)) { throw 'llvm-readelf.exe missing from same NDK' }
+$relocs = @(& $readelf '--relocs' $pvr)
+if ($LASTEXITCODE -ne 0) { throw 'PVR ELF relocation extraction failed' }
+$metadata['callback_relocations'] = @()
+$metadata['callback_candidates'] = @()
+$callbackTargets = [System.Collections.Generic.HashSet[long]]::new()
+foreach ($line in $relocs) {
+    $m = [regex]::Match($line, '^\s*([0-9a-fA-F]{8,16})\s+[0-9a-fA-F]+\s+(R_AARCH64_\S+)\s+(.*)
+    if ($w.To -le $w.From -or ($w.To-$w.From) -gt 0x1200) { throw 'Invalid bounded disassembly region' }
+    $out = @(& $objdump '-d' '--demangle' '--no-show-raw-insn' ("--start-address=0x{0:x}" -f $w.From) ("--stop-address=0x{0:x}" -f $w.To) $bins[$w.Bin])
+    if ($LASTEXITCODE -ne 0 -or $out.Count -lt 7) { throw "Disassembly failed: $($w.Name)" }
+    $dest = Join-Path $private ($w.Name + '.txt')
+    $out | Set-Content -LiteralPath $dest -Encoding utf8
+    $metadata.windows += @{ name=$w.Name; input=$w.Bin; start=$w.From; end=$w.To }
+}
+$manifest = Join-Path $private 'manifest.json'
+$metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding utf8
+$archive = Join-Path $private ($run + '.zip')
+$contents = @(Get-ChildItem -LiteralPath $private -File -Filter '*.txt') + @(Get-Item -LiteralPath $manifest)
+Compress-Archive -LiteralPath @($contents.FullName) -DestinationPath $archive -CompressionLevel Optimal
+# Publish only disassembly excerpts and metadata, never proprietary ELF bytes.
+New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+$files = @(
+    @{ Local=$archive; Name=($run + '.zip') },
+    @{ Local=$manifest; Name=($run + '.json') }
+)
+$lines = @()
+foreach ($f in $files) {
+    $expected = (Get-FileHash -LiteralPath $f.Local -Algorithm SHA256).Hash.ToLowerInvariant()
+    $part = Join-Path $OutputRoot ($f.Name + '.part')
+    $final = Join-Path $OutputRoot $f.Name
+    Copy-Item -LiteralPath $f.Local -Destination $part -ErrorAction Stop
+    if ((Get-FileHash -LiteralPath $part -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'SMB .part integrity failed' }
+    Move-Item -LiteralPath $part -Destination $final -ErrorAction Stop
+    if ((Get-FileHash -LiteralPath $final -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'SMB final integrity failed' }
+    $lines += "$expected  $($f.Name)"
+}
+$markerPart = Join-Path $OutputRoot ($run + '.sha256.part')
+$marker = Join-Path $OutputRoot ($run + '.sha256')
+$lines | Set-Content -LiteralPath $markerPart -Encoding ascii
+$before = (Get-FileHash -LiteralPath $markerPart -Algorithm SHA256).Hash
+Move-Item -LiteralPath $markerPart -Destination $marker -ErrorAction Stop
+if ((Get-FileHash -LiteralPath $marker -Algorithm SHA256).Hash -ne $before) { throw 'Final marker verification failed' }
+[ordered]@{ status='TRACE_CAPTURED_NOT_PROVEN'; zip=(Join-Path $OutputRoot ($run + '.zip')); manifest=(Join-Path $OutputRoot ($run + '.json')); marker=$marker; windows=$windows.Count; pvr_symbol_hits=@($metadata.symbol_hits['pvr']).Count } | ConvertTo-Json -Compress
+)
+    if (-not $m.Success) { continue }
+    $slot = [Convert]::ToInt64($m.Groups[1].Value, 16)
+    if ($slot -lt 0x752b0 -or $slot -ge 0x75330) { continue }
+    $kind = $m.Groups[2].Value
+    $tail = $m.Groups[3].Value.Trim()
+    $metadata['callback_relocations'] += @{ slot=('0x{0:x}' -f $slot); type=$kind; text=$line.Trim() }
+    if ($kind -ne 'R_AARCH64_RELATIVE') { continue }
+    $tokens = @([regex]::Matches($tail, '(?:0x)?[0-9a-fA-F]+'))
+    if (-not $tokens.Count) { continue }
+    $candidate = [Convert]::ToInt64(($tokens[-1].Value -replace '^0x',''), 16)
+    # Restrict candidate excerpts to plausible executable PVR addresses.
+    if ($candidate -ge 0x30000 -and $candidate -lt 0x74000 -and (($candidate % 4) -eq 0)) {
+        [void]$callbackTargets.Add($candidate)
+    }
+}
+foreach ($target in @($callbackTargets | Sort-Object | Select-Object -First 8)) {
+    $n = @($metadata['callback_candidates']).Count
+    $metadata['callback_candidates'] += ('0x{0:x}' -f $target)
+    $windows += @{ Name=('16-pvr-hidl-callback-candidate-' + $n); Bin='pvr'; From=$target; To=($target+0x600) }
+}
+$metadata['callback_vtable_identity_verified'] = $false
+$metadata['shared_buffer_identity_verified'] = $false
+# A missing relocation is recorded, NEVER treated as proof or guessed.
+$metadata['callback_vtable_relocation_seen'] = @($metadata['callback_relocations']).Count -gt 0
+
 foreach ($w in $windows) {
     if ($w.To -le $w.From -or ($w.To-$w.From) -gt 0x1200) { throw 'Invalid bounded disassembly region' }
     $out = @(& $objdump '-d' '--demangle' '--no-show-raw-insn' ("--start-address=0x{0:x}" -f $w.From) ("--stop-address=0x{0:x}" -f $w.To) $bins[$w.Bin])

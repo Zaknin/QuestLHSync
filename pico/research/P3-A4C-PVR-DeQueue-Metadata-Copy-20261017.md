@@ -46,3 +46,13 @@ In `quickcamera.core.so`, `CSLMessageHandler` uses `CSLMessage+0x18` as a 64-bit
 Trace how the HIDL `QuickCameraBufInfo` native handles plus per-buffer metadata offset map into PVR `QuickCameraClient`'s `base+0x20, offset+0x28` buffer object. Focus on configuration callback invoked from `ConfigAndAllocBuffers@0x6a3dc`, `PrepareStreamOn@0x6a768` mapping setup, and the local constructor/callback helper responsible for allocating and storing the mapped buffer object. **Do not repeat P2 camera captures, force device wake, change firmware, or enable live Lighthouse correction.**
 
 This note records the evidence directly examined on 2026-10-17 without making unproven physical or cross-machine time claims.
+
+## P3-A4D — Targeted callback-vtable relocation follow-up (source prepared)
+
+The exact PVR consumer copy is verified, but same shared memory still requires an identity proof. The PVR `PrepareStreamOn()` implementation (already retrieved from the 15-window archive) inserts buffer records into three indexes; `DeQueueFrame(void**,FrameMetaDate*)` follows the V4L2 dequeued index to one such record and loads its image mapping at `record+0x20`, metadata offset at `record+0x28`. PVR `ConfigAndAllocBuffers@0x6a3f0-0x6a408` constructs a C++ HIDL callback functor whose vtable sits near `0x752c0`. The callback's real function implementation was NOT in the previously captured 15 windows. This is the next specific source to resolve, not a request for new Pico capture.
+
+The revised trace script v3 locally reads ELF relocation records from the pinned private PVR binary and collects exact entries at `0x752b0..0x75330`. A bounded set of candidate addresses is included in its private disassembly archive. **All candidates remain unverified** until instructions establish that the callback copies HIDL `QuickCameraBufInfo` buffer descriptor/offset into the fields referenced by `PrepareStreamOn`. No public vendor ELF bytes, raw disassembly or private calibration are committed.
+
+The source is deterministic and offline-only; it does not use ADB, Pico, SteamVR, or networking except publishing hashed evidence to private TrueNAS. Presence of relocation candidates cannot by itself certify the callback binding, native-handle identity, QTIMER physical event or live correction. Existing fail-closed flags remain false.
+
+Owner invocation remains `python -m unittest pico.tests.test_p3a4_bridge_contract -v` then `pwsh -NoProfile -File .\pico\tools\trace_p3a4_quickcamera_bridge.ps1` after git pull. Expected window count is 15 plus recovered callback candidates (potentially zero); do **not** assert an exact number before hardware-host test. Test status: synthetic checks to be run on owner's Windows; GitHub readback required.

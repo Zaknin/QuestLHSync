@@ -65,6 +65,18 @@ class BridgeContractTests(unittest.TestCase):
         self.assertIn('From=$start; To=($start+$size)', self.src)
         self.assertIn("($w.To-$w.From) -gt 0x1200", self.src)
 
+    def test_v3_hidl_callback_relocation_probe(self):
+        self.assertIn("schema='p3a4.offline.bridge.v3'", self.src)
+        self.assertIn('llvm-readelf.exe', self.src)
+        self.assertIn("0x752b0", self.src)
+        self.assertIn("0x75330", self.src)
+        self.assertIn("R_AARCH64_RELATIVE", self.src)
+        self.assertIn("callback_candidates", self.src)
+        self.assertIn("callback_vtable_identity_verified'] = $false", self.src)
+        self.assertIn("shared_buffer_identity_verified'] = $false", self.src)
+        self.assertIn("Select-Object -First 8", self.src)
+        self.assertIn('To=($target+0x600)', self.src)
+
     def test_essential_regions_are_present(self):
         for address in ('0x664d0', '0x375d0', '0x38670', '0x38bc0',
                         '0x36860', '0x9494', '0x98e4', '0xa59c'):
