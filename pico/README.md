@@ -1886,3 +1886,50 @@ There are no live clock, camera, SLAM,
 SteamVR or `exact_time` changes.
 Full audit:
 [`P2-K0-SourceAndSlot130-20261016.md`](research/P2-K0-SourceAndSlot130-20261016.md).
+
+
+### P2 precise K0 +130 A/B source: 128-bit ELF initializer at 0x73170 — 2026-10-17
+
+Owner's `trace_k0_clock_base.ps1` passed **12/12**
+synthetic tests and finally resolved native register
+provenance: `onFrameAvailable` sets `x19=x0=this`;
+constructor sets `x20=x0=this`. Both address
+seven blocks at `this+cameraIndex*0x320`.
+
+A closer read reveals the actual `+0x330/+0x338`
+coefficient initializer at `0xa72f0`:
+`str q1,[x23,#0x5f0]`, where
+`x23=this-0x2c0+cameraIndex*0x320`.
+That is **exactly** `this+0x330/+0x338+cameraIndex*0x320`.
+The 128-bit `q1` is loaded in the constructor
+from **ELF VA 0x73170**, stashed at `sp+0x30`,
+and copied into each camera block in the 7-iteration
+initialization loop. Its first 64-bit word initializes
+native coefficient B; the second initializes A.
+Prior attention to `d8` at 0x736b0 was a
+different structure field, **not the A/B source**.
+No claim of live runtime immutability is made.
+
+Offline-only `pico/tools/verify_k0_q1_coefficients.ps1`
+runs **15** synthetic regressions (9 new + 6 earlier)
+and verifies exact ELF SHA-256 before reading the
+16 raw bytes at `0x73170`. It reports the
+actual signed integer initializer values and
+compares the native expression
+`52000 + A + ((B*4) ASR 1)` to the observed
+**225997 ns** fixed raw-to-corrected delta over
+1,204 K0 frames. The script reports a mismatch
+rather than interpreting it as exposure proof.
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\verify_k0_q1_coefficients.ps1
+```
+
+New source, unit tests, and precise constraint
+documented in
+[`pico/research/P2-K0-SourceAndSlot130-20261016.md`](research/P2-K0-SourceAndSlot130-20261016.md).
+Tools have **not yet been run** on owner's PC.
+No headset required; `OBSERVE ONLY` and all
+`exact_time` and Lighthouse correction gates stay CLOSED.
