@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 from uuid import uuid4
@@ -31,7 +32,10 @@ def adb(serial, *args, timeout=120):
 
 
 def root_shell(serial, command, timeout=120):
-    return adb(serial, 'shell', 'su', '-c', command, timeout=timeout)
+    # adb joins remote argv into a shell command string. su -c takes ONE
+    # string argument; a raw for/do command breaks into separate words.
+    # POSIX shell quoting is for the Android shell, NOT Windows PowerShell.
+    return adb(serial, 'shell', 'su', '-c', shlex.quote(command), timeout=timeout)
 
 
 def parse_needed(text):
@@ -85,7 +89,7 @@ def inventory(serial):
         if 'uid=0(' not in root_shell(serial, 'id', timeout=15):
             raise RuntimeError('Root shell unavailable')
         # Only verified existing Android mount roots. Never presume a library path.
-        shell = 'for d in ' + ' '.join(ROOTS) + '; do if [ -d "$d" ]; then find "$d" \\( -type f -o -type l \\); fi; done'
+        shell = 'for d in ' + ' '.join(ROOTS) + '; do if [ -d "$d" ]; then find "$d" -name "*.so" -print; fi; done'
         paths, candidates = parse_inventory(root_shell(serial, shell, timeout=180))
         result['shared_object_count'] = len(paths)
         result['candidate_paths'] = candidates

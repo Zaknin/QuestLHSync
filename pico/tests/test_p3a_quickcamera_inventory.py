@@ -1,5 +1,6 @@
 """Mock tests for P3-A; do not connect to a Pico."""
 import hashlib
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
@@ -40,6 +41,56 @@ class InventoryTest(unittest.TestCase):
             result = m.inventory('192.168.23.12:5555')
         self.assertEqual(result['status'], 'BLOCKED')
         self.assertFalse(result['producer_timestamp_proven'])
+
+    def test_root_shell_for_do_is_one_su_argument(self):
+        script = 'for d in /vendor /system; do if [ -d "$d" ]; then find "$d" -name "*.so" -print; fi; done'
+        with patch.object(m, 'adb', return_value='ok') as send:
+            self.assertEqual(m.root_shell('test:5555', script, timeout=180), 'ok')
+        self.assertEqual(send.call_args.args, ('test:5555', 'shell', 'su', '-c', shlex.quote(script)))
+        self.assertEqual(send.call_args.kwargs, {'timeout': 180})
+        # adb's reconstructed remote shell string must retain a single
+        # full script as the sole argument after su -c.
+        self.assertEqual(shlex.split('su -c ' + send.call_args.args[-1]), ['su', '-c', script])
+
+    def test_root_shell_quotes_hash_and_id_too(self):
+        for script in ('id', 'sha256sum /vendor/lib64/libpvrtrackingcamera.so',
+                       'printf "%s" "abc def"'):
+            with self.subTest(script=script), patch.object(m, 'adb', return_value='ok') as send:
+                m.root_shell('test:5555', script)
+                self.assertEqual(shlex.split('su -c ' + send.call_args.args[-1]),
+                                 ['su', '-c', script])
+
+    def test_inventory_happy_path_uses_only_reads(self):
+        cam = '/system/lib64/libpvrtrackingcamera.so'
+        producer = '/vendor/lib64/vendor.test.quickcamera@1.0.so'
+        calls = []
+        def fake_adb(serial, *args, timeout=120):
+            calls.append(args)
+            if args == ('get-state',):
+                return 'device'
+            if args[:2] == ('shell', 'getprop'):
+                return 'mock-build'
+            raise AssertionError('Unexpected adb call: ' + repr(args))
+        def fake_root(serial, command, timeout=120):
+            calls.append(('root', command))
+            if command == 'id':
+                return 'uid=0(root) gid=0(root)'
+            if command.startswith('for d in '):
+                return cam + '\n' + producer
+            if command == 'sha256sum ' + cam:
+                return m.CAMERA_SHA + '  ' + cam
+            if command == 'sha256sum ' + producer:
+                return 'a'*64 + '  ' + producer
+            raise AssertionError('Unexpected root command: ' + command)
+        with patch.object(m, 'adb', side_effect=fake_adb), \
+             patch.object(m, 'root_shell', side_effect=fake_root), \
+             patch.object(m, 'pinned_needed', return_value=[producer.rsplit('/',1)[1]]):
+            result = m.inventory('test:5555')
+        self.assertEqual(result['status'], 'INVENTORY_READY')
+        self.assertEqual(result['device_pvr_camera_sha256'], m.CAMERA_SHA)
+        self.assertEqual(result['producer_hashes'][producer], 'a'*64)
+        self.assertFalse(result['producer_timestamp_proven'])
+        self.assertTrue(all(c[0] in ('get-state', 'shell', 'root') for c in calls))
 
     def test_scan_only_existing_root_names(self):
         self.assertTrue(all(d.startswith('/') and not d.endswith('.so') for d in m.ROOTS))
