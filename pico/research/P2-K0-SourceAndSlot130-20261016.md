@@ -817,11 +817,11 @@ for detected clobbers/calls; it records owner functions
 and surrounding instructions without assuming that a
 matched instruction was executed at runtime. `0x73170`
 is a positive control from the verified constructor.
-`pico/tests/test_k0_literal_references.py` has **seven**
+`pico/tests/test_k0_literal_references.py` has **eight**
 synthetic regression cases; the wrapper
 `pico/tools/trace_k0_literal_references.ps1` runs
-those seven plus the existing six static-literal tests
-(**13 expected**) and saves a detailed private JSON
+those eight plus the existing six static-literal tests
+(**14 expected**) and saves a detailed private JSON
 report of every candidate reference.
 
 ```powershell
