@@ -2040,3 +2040,45 @@ no Pico, Android, SLAM, SteamVR or `exact_time` changes.
 After determining literal-use provenance, prioritize
 hardware time origin and LH/SteamVR pose clock mapping
 over further microsecond-scale profile tuning.
+
+
+### P2 ROM timing sources: ConfigManager loads exact-match pair — 2026-10-17
+
+The owner completed the SHA-pinned
+`trace_k0_literal_references.ps1` run with
+**14/14 tests PASS**. Static ADRP+LDR references
+confirm `pvr::ConfigManager::getInstance()` at
+`0xa24b0` and `ConfigManager::ConfigManager()`
+at `0xa25e4` both load the ROM pair at
+`0x73160` (B=19333, A=135331,
+predicted K0 `slot122-slot130=225997ns` with E=4).
+`CameraManager::CameraManager()` instead
+loads `0x73170` at `0xa7198`
+(B=19069, A=133483, prediction 223621ns).
+Both source pairs are real. The first matches
+all 1204 accepted frames mathematically.
+
+**Do not assert active ConfigManager→CameraManager
+coefficient transfer:** the subsequent destination
+of q2 from ConfigManager and any camera setter
+are not yet verified. The new offline
+`pico/tools/trace_k0_configmanager_q2.ps1`
+prints narrowly bounded ConfigManager getter/
+constructor code around each load, plus actual
+CameraManager coefficient initializer and relevant
+exported symbols, and re-runs 14 existing tests:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_configmanager_q2.ps1
+```
+
+This tool has not yet run on Windows; no live
+device/SLAM/SteamVR/driver interaction.
+Results, interpretation gates and profile-provenance
+caution are recorded in
+[`P2-K0-SourceAndSlot130-20261016.md`](research/P2-K0-SourceAndSlot130-20261016.md).
+After this targeted check, focus on the raw camera
+timestamp's hardware event and SteamVR pose clock.
+`OBSERVE ONLY`; `exact_time=false`.
