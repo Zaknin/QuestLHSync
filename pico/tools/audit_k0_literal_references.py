@@ -55,6 +55,11 @@ def find_pc_relative_refs(text):
         if m:
             pages[m.group(1).lower()] = int(m.group(2), 16)
         else:
+            # AArch64 x0..x18 are caller-saved. Do not carry a presumed
+            # ADRP page through an arbitrary call and invent a dataflow.
+            if op in ("bl", "blr"):
+                for r in range(19):
+                    pages.pop(f"x{r}", None)
             memory = BASE_MEM.search(args)
             if memory and op in ("ldr", "ldur", "ldp", "ldnp", "add"):
                 base, offset = memory.group(1).lower(), int(memory.group(2), 16)
