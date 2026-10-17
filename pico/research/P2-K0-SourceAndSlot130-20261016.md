@@ -714,3 +714,59 @@ No Pico, ADB, QuickCamera service calls, tracker, calibration,
 `exact_time`, or SteamVR pose modifications involved. All
 physical exposure and QTIMER producer-origin verification gates
 remain CLOSED, irrespective of numerical agreement.
+
+
+## 2026-10-17: actual constructor initializer differs from captured K0 — 15/15 tests pass
+
+Owner ran `verify_k0_q1_coefficients.ps1` after updating to `c7419b5`.
+**All 15 synthetic tests passed**, both original constructor layout
+and the ARM64 arithmetic test suite. The exact SHA-pinned ELF bytes
+at VA `0x73170..0x7317f` were:
+
+```text
+7d4a0000000000006b09020000000000
+B = 19069 (signed 64-bit)
+A = 133483 (signed 64-bit)
+E = 4 (accepted K0 frame code)
+fixed subtraction = 52000ns
+predicted initial adjustment = 52000 + 133483 + ((19069*4) ASR 1)
+                             = 223621ns
+recorded for 1204 K0 frames = 225997ns
+difference = +2376ns
+```
+
+Therefore, **the initial firmware constant pair does not predict
+the recorded +130 correction**. The observed constraint is
+`A_runtime + 2*B_runtime = 173997ns`, while the
+constructor initializes `A_init + 2*B_init = 171621ns`.
+Consequently, assuming the exact same source formula and
+`E=4`, the *effective* coefficient difference obeys:
+
+```text
+delta_A + 2*delta_B = 2376ns
+```
+
+Possible causes include a post-constructor coefficient update,
+alternate initialization path/profile, or an unseen frame-metadata
+flow. **Not proven**: that A specifically changed by +2376,
+that B specifically changed by +1188, that the runtime A/B can be
+read safely, or that +130 is the physical exposure midpoint.
+Our earlier conditional inference "initial q1 explains all K0
+timing" is definitively **falsified** by this paired owner run.
+
+Next diagnostic target is source-level *writes* to the two
+`CameraManager` fields `this+camera_index*0x320+
+0x330/0x338`, including stores reached via register aliases,
+vector stores, memcpy and configuration reload. Numeric agreement
+must not be forced by silently altering the fixed `52000`
+value or promoting `exact_time`. The existing 1,204-frame
+capture and hash-pinned firmware remain sufficient for static
+analysis while Pico is powered off.
+
+Gate status: `constructor_A_B_read=PROVEN`,
+`A_B_effective_runtime_values=UNVERIFIED`,
+`QuickCamera_active_K0_listener=UNVERIFIED`,
+`QTIMER_optical_event=UNVERIFIED`,
+`physical_exposure=UNVERIFIED`,
+`SteamVR_clock_alignment=UNVERIFIED`,
+`live_lighthouse_correction_allowed=false`.
