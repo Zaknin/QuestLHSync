@@ -514,3 +514,98 @@ run on the owner's PC**; no camera timestamp domain
 may be upgraded from UNVERIFIED based solely on this
 static dispatch mapping. `OBSERVE ONLY`,
 `exact_time=false`, SteamVR HMD pose injection blocked.
+
+
+## Owner's confirmed jump table; seven-slot constructor and unresolved pointer bases — 2026-10-17
+
+The owner successfully ran `trace_k0_constructor_dispatch.ps1`
+with **13/13 tests PASS**. The SHA-pinned service ELF
+contains exactly these four unsigned bytes at VA
+`0x73a10`: **`00 07 0A 0D`**. They resolve the
+`CameraImageListener::onFrameAvailable` dispatch as:
+
+| Native `pvr_frame_item_t[0]` | Table byte | Native branch | CameraManager ID |
+|---|---:|---|---:|
+| 0 | 0 | 0xabc24 | 0 |
+| 1 | 7 | 0xabc40 | 3 |
+| 2 | 10 | 0xabc4c | 4 |
+| 3 | 13 | 0xabc58 | 5 |
+
+This is **direct static evidence** of the exact same set
+of camera IDs the existing K0 reader uses. It closes the
+previous unknown branch-table mapping, **not** the final
+active listener instance registration or physical-to-factory
+camera extrinsics.
+
+Also, the expanded `CameraManager::CameraManager()`
+disassembly gives:
+
+```text
+a7120: mov x20,x0            # manager this
+a7190: mov x28,x20
+a71a4: str xzr,[x28,#0x40]!  # x28=this+0x40
+a71bc: sub x23,x28,#0x300  # x23=this-0x2c0
+a71ec: str xzr,[x23,#0x330] # this+0x70, init word B?
+a71f0: str d8,[x23,#0x338] # this+0x78, init word A?
+a72c4: add x21,x21,#1
+a72ec: cmp x21,#7
+a72f4: add x23,x23,#0x320
+a72fc: b.ne 0xa71e0
+```
+
+Thus **seven** camera-style blocks are initialized
+with stride **0x320**, constructor `this`-relative
+candidate `B` addresses
+`0x70+0x320*i` and `A` addresses
+`0x78+0x320*i` for i=0..6.
+The `d8` word originates from `ldr d8,[x8,#0x6b0]`
+after `adrp x8,0x73000`, i.e. file-backed
+ELF VA **0x736b0**. Its actual bytes are **not
+yet known** and must not be interpreted as a
+floating-point value or nanosecond correction
+until read and traced.
+
+**Crucial discrepancy:** the frame-time expression
+at `0xaae88–0xaae94` addresses
+`x19+camera_index*0x320+0x330/0x338`,
+not `x20+0x70/0x78`. We have NOT yet
+established the relation between the **constructor
+`x20`** and the **callback `x19`**; therefore
+one cannot identify the constructor values
+`0` and `d8` with the active runtime
+`B/A`, or infer the actual values of
+these parameters from matching source-level
+numeric offsets alone. The exact recorded
+equation `A+2B=173997 ns` is valid for
+the **actual values read by the callback**,
+which may differ from constructor initializers.
+
+The next offline-only program reads the raw 64-bit
+words at ELF VAs 0x736b0, 0x73748 and
+0x73738 via an existing validated
+`PT_LOAD` mapping, prints their integer
+and floating-point *bit interpretations*,
+and extracts `CameraManager::onFrameAvailable`
+prologue to recover how callback `x19/x26`
+are assigned. The code and six new synthetic
+checks are here:
+
+```text
+pico/tools/audit_k0_constructor_literal.py
+pico/tests/test_k0_constructor_literal.py
+pico/tools/trace_k0_clock_base.ps1
+```
+
+Owner command without Pico or Android devices:
+
+```powershell
+cd C:\Dev\PicoLHSync
+git pull --ff-only
+pwsh -NoProfile -File .\pico\tools\trace_k0_clock_base.ps1
+```
+
+The new tool has not been executed yet on the
+owner's Windows checkout. It preserves SHA-pinned
+read-only analysis, `OBSERVE_ONLY`,
+`exact_time=false` and the hardware
+exposure/SteamVR gates.
