@@ -55,6 +55,15 @@ class LiteralReferenceTests(unittest.TestCase):
 """
         self.assertEqual(find_pc_relative_refs(code), [])
 
+    def test_call_invalidates_volatile_page_register(self):
+        code = """
+00000000000a1000 <pvr::CameraManager::other()>:
+  a1000: adrp x8, 0x73000
+  a1004: bl 0x155680 <__android_log_print@plt>
+  a1008: ldr q0, [x8, #0x160]
+"""
+        self.assertEqual(find_pc_relative_refs(code), [])
+
     def test_unrelated_offset_not_counted(self):
         code = """
 00000000000a1000 <pvr::CameraManager::other()>:
