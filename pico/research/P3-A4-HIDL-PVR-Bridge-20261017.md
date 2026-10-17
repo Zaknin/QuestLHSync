@@ -26,3 +26,23 @@ All disassembly excerpts and JSON are **private**, with local staging under pico
 The next review must inspect the disassembly windows and symbol xrefs to show or reject an exact byte-level connection from CSLFenceCallback metadata at byte 0 of the native per-frame buffer to PVR QuickCameraClient DeQueueFrame first word. If no symbol survived stripping, inspect callsite branch targets on the pinned P2 ELF, do not guess mapping or enable tracking.
 
 Validation state: contract tests authored; owner Windows and PVR hardware-source bridge proof pending.
+
+## 2026-10-17 P3-A4B — exact PVR overload capture correction
+
+Owner ran P3-A4 twice on Windows: 6/6 structural contract tests PASS each time; private outputs `p3a4-bridge-20261017T182916Z-a530c94b` and `p3a4-bridge-20261017T184444Z-5747d0ea`, each `TRACE_CAPTURED_NOT_PROVEN`, 12 windows and 22 PVR symbol hits. The first ZIP/JSON/sidecar was retrieved from downstream Drive and its digests verified, with 12 excerpt files intact. The second archive is canonical on SMB but Cloud Sync readback was not yet visible when checked.
+
+Review revealed a **trace-selector defect**, not a PVR issue: four auto-selected symbol excerpts captured early unrelated QuickCameraClient functions, despite dynamic symbols exposing all **three** specific DeQueueFrame overloads. Grounded dynamic symbol addresses and sizes from PVR pinned `cf9e507...`:
+
+| PVR function | ELF start | ELF symbol size |
+|---|---:|---:|
+| DeQueueFrame(native_handle**, void**, FrameMetaDate*) | 0x6B1A4 | 0x1D4 |
+| DeQueueFrame(native_handle**, FrameMetaDate*) | 0x6B520 | 0x1C8 |
+| DeQueueFrame(void**, FrameMetaDate*) | 0x6B6E8 | 0x1A8 |
+| ConfigAndAllocBuffers | 0x6A3DC | 0xC8 |
+| PrepareStreamOn | 0x6A768 | 0x484 |
+| QuickCameraClient ctor | 0x6A148 | 0x180 |
+| PvrCameraDeviceCallback::OnBufferReady | 0x663E4 | 0x10 |
+
+Version 2 of `trace_p3a4_quickcamera_bridge.ps1` now captures **all seven specific functions in full ELF-symbol extents**, and the eight previous source regions. It resolves by exact mangled-to-demangled ABI-signature patterns, deduplicates duplicate ctor aliases, requires exactly one matching executable symbol per target, and fails closed if size or symbol mismatches. No new device access, no software changes to runtime code, and no producer-origin certification. Expected output is 15 windows and 22 PVR symbol hits on the unchanged P2 SHA-pinned source, but only a real Windows execution can confirm that.
+
+Offline reader hypothesis to check in v2 evidence: whether `QuickCameraClient::DeQueueFrame(void**, FrameMetaDate*)` reads the same metadata bytes at the native shared-buffer base / mapped native handle that `CamQuickAccessDevice::CSLFenceCallback` fills at offset 0. This PVR boundary was **not** established by prior 12-window output. Do not report timestamp producer chain or physical exposure event as PASS before showing the actual loads/stores and pointer origin.

@@ -41,6 +41,30 @@ class BridgeContractTests(unittest.TestCase):
         self.assertIn('Move-Item -LiteralPath $markerPart', self.src)
         self.assertIn('SMB final integrity failed', self.src)
 
+    def test_precise_pvr_symbol_provenance(self):
+        # Old trace inadvertently selected the first four *unrelated*
+        # QuickCameraClient dynamic symbols. Require exact ABI overloads.
+        for piece in (
+            'DeQueueFrame\\(native_handle\\*\\*, void\\*\\*,',
+            'DeQueueFrame\\(native_handle\\*\\*, pico::',
+            'DeQueueFrame\\(void\\*\\*, pico::',
+            'QuickCameraClient::ConfigAndAllocBuffers',
+            'QuickCameraClient::PrepareStreamOn',
+            'QuickCameraClient::QuickCameraClient',
+            'PvrCameraDeviceCallback::OnBufferReady',
+        ):
+            self.assertIn(piece, self.src)
+        self.assertIn('Select-Object -Unique', self.src)
+        self.assertIn('PVR exact symbol resolution failed', self.src)
+        self.assertIn('PVR symbol size/address unsafe', self.src)
+        self.assertIn('pvr_exact_targets', self.src)
+        self.assertIn('p3a4.offline.bridge.v2', self.src)
+        self.assertNotIn("Name=('09-pvr-symbol-' + $n)", self.src)
+
+    def test_symbol_capture_is_in_exact_function_bounds(self):
+        self.assertIn('From=$start; To=($start+$size)', self.src)
+        self.assertIn("($w.To-$w.From) -gt 0x1200", self.src)
+
     def test_essential_regions_are_present(self):
         for address in ('0x664d0', '0x375d0', '0x38670', '0x38bc0',
                         '0x36860', '0x9494', '0x98e4', '0xa59c'):

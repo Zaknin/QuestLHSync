@@ -34,7 +34,7 @@ $windows = @(
     @{ Name='08-hidl-configuration'; Bin='hidl'; From=0xa59c; To=0xa6a0 }
 )
 $metadata = [ordered]@{
-    schema='p3a4.offline.bridge.v1'
+    schema='p3a4.offline.bridge.v2'
     status='TRACE_CAPTURED_NOT_PROVEN'
     observe_only=$true
     exact_time=$false
@@ -57,20 +57,33 @@ foreach ($kind in @('pvr','core','hidl')) {
         Select-Object -First 120 | ForEach-Object { $_.Line })
     $metadata.symbol_hits[$kind] = @($hits)
 }
-# When the PVR ELF exports a real DeQueueFrame symbol, trace a narrow window there.
-foreach ($line in $metadata.symbol_hits['pvr']) {
-    if ($line -match 'QuickCameraClient|DeQueueFrame') {
-        if ($line -match '^\s*([0-9a-fA-F]{8,16})\s') {
-            $start = [Convert]::ToInt64($Matches[1],16)
-            if ($start -gt 0 -and $start -lt 0x2000000) {
-                $duplicate = @($windows | Where-Object { $_.From -eq $start })
-                if (-not $duplicate) {
-                    $n = @($windows | Where-Object { $_.Name -like '09-*' }).Count
-                    if ($n -ge 4) { break }
-                    $windows += @{ Name=('09-pvr-symbol-' + $n); Bin='pvr'; From=$start; To=($start+0x500) }
-                }
-            }
-        }
+# Only exact SHA-pinned PVR helper symbols can enter this evidence set.
+# The earlier "first four QuickCameraClient hits" sampled unrelated functions.
+# Resolve full function extent using the ELF dynamic symbol table rather
+# than guessing end addresses. Fail closed if the expected ABI differs.
+$pvrTargets = @(
+    @{ Name='09-pvr-DeQueue-native-pointer-and-frame'; Pattern='QuickCameraClient::DeQueueFrame\(native_handle\*\*, void\*\*,' },
+    @{ Name='10-pvr-DeQueue-native-pointer'; Pattern='QuickCameraClient::DeQueueFrame\(native_handle\*\*, pico::' },
+    @{ Name='11-pvr-DeQueue-void-pointer'; Pattern='QuickCameraClient::DeQueueFrame\(void\*\*, pico::' },
+    @{ Name='12-pvr-ConfigAndAllocBuffers'; Pattern='QuickCameraClient::ConfigAndAllocBuffers\(' },
+    @{ Name='13-pvr-PrepareStreamOn'; Pattern='QuickCameraClient::PrepareStreamOn\(' },
+    @{ Name='14-pvr-Constructor'; Pattern='QuickCameraClient::QuickCameraClient\(' },
+    @{ Name='15-pvr-OnBufferReady'; Pattern='PvrCameraDeviceCallback::OnBufferReady\(' }
+)
+$metadata['pvr_exact_targets'] = @()
+foreach ($target in $pvrTargets) {
+    $hits = @($metadata.symbol_hits['pvr'] | Where-Object { $_ -match $target.Pattern } | Select-Object -Unique)
+    if ($hits.Count -ne 1) { throw "PVR exact symbol resolution failed for $($target.Name); hits=$($hits.Count)" }
+    $parsed = [regex]::Match($hits[0], '^\s*([0-9a-fA-F]{8,16})\s+g\s+DF\s+\.text\s+([0-9a-fA-F]{8,16})\s')
+    if (-not $parsed.Success) { throw "PVR .text symbol location invalid for $($target.Name)" }
+    $start = [Convert]::ToInt64($parsed.Groups[1].Value, 16)
+    $size = [Convert]::ToInt64($parsed.Groups[2].Value, 16)
+    if ($start -le 0 -or $size -le 0 -or $size -gt 0x1200) {
+        throw "PVR symbol size/address unsafe for $($target.Name)"
+    }
+    $windows += @{ Name=$target.Name; Bin='pvr'; From=$start; To=($start+$size) }
+    $metadata['pvr_exact_targets'] += @{
+        name=$target.Name; symbol=$hits[0]; address=$start; size=$size
     }
 }
 foreach ($w in $windows) {
