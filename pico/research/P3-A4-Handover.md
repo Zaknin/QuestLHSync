@@ -1,8 +1,26 @@
-# P3-A5 — QuickCamera timestamp provenance handover
+# P3-A6-M0 — QuickCamera timestamp provenance handover
+
+Текущее состояние на 2026-10-18: подготовлена offline-фаза runtime validation в `C:\Dev\PicoLHSync`, branch `feature/pico-support`, от исходного HEAD `97977e868ac5d0a3e743d6323266db2b666a6a06`. Pico, ADB, SSH, SteamVR и Lighthouse correction не запускались. В репозитории есть только synthetic analyzer и authorization checker; device-facing collector отсутствует.
+
+P3-A5 выводы ниже без изменений: `/dev/videoN` для конкретного `VideoQueueUtil` остаётся `UNKNOWN`; QBUF/DQBUF kernel roundtrip — `PARTIAL/BLOCKED`; CSLAlloc producer CPU VA ↔ PVR FD backing identity — `UNKNOWN/BLOCKED`; QTIMER event, units и физическое SOF/exposure не доказаны.
+
+## Текущие P3-A6-M0 материалы
+
+1. [P3-A6-Runtime-Validation-Plan.md](P3-A6-Runtime-Validation-Plan.md) — этапы M1–M5, минимальные измерения, clock model и условия отдельного hardware execution approval.
+2. [P3-A6-Risk-and-Permissions.md](P3-A6-Risk-and-Permissions.md) — права, Android/PICO доступность, timing/privacy/resource risks и stop conditions.
+3. [P3-A6-Acceptance-Matrix.md](P3-A6-Acceptance-Matrix.md) — разделение synthetic pass и будущего runtime acceptance; текущие gates false.
+4. [`p3a6_observation_analyzer.py`](../tools/p3a6_observation_analyzer.py) и [`p3a6_execution_gate.py`](../tools/p3a6_execution_gate.py) — offline-only tool modules; ни один не обращается к устройству.
+5. [`P3-A6-synthetic-observations.json`](../tests/fixtures/P3-A6-synthetic-observations.json) и [`test_p3a6_runtime_analyzer.py`](../tests/test_p3a6_runtime_analyzer.py) — synthetic fixture и регрессии.
+
+Проверено offline: целевой `python -m unittest pico.tests.test_p3a6_runtime_analyzer -v` — 19 тестов; полный `python -m unittest discover -s pico/tests -v` — 196 тестов, OK. CLI обработал только synthetic fixture; report вернул `experimental_verdict=NOT_RUN`, а все gates остались false. Это не hardware result.
+
+Для следующей hardware-фазы требуется отдельная прямая инструкция владельца с точным набором действий, лимитом времени/наблюдений и разрешённым уровнем доступа. Inventory approval не распространяется на ptrace, process-memory reads или kernel tracing. Сейчас разрешения нет; ни один device-facing шаг не запускать.
+
+Статусы P3-A4/P3-A5 в proof matrix не повышены. Дополнение зафиксировано в конце [P3-A4-Proof-Matrix.md](P3-A4-Proof-Matrix.md).
 
 Состояние на 2026-10-18. Работа выполнена в `C:\Dev\PicoLHSync`, branch `feature/pico-support`, начиная с чистого `e3f04c53b5fa0a71704d40303011b30042af209e`.
 
-## Вердикт
+## P3-A5: source-audit verdict (без изменения)
 
 P3-A5 уточнила два внешних contract gaps. Локальный ELF provider/source, соответствующий PICO `CSLAlloc`, не найден; публичный CamX source mirror показывает только аналогичную реализацию и не привязан к PICO build. Поэтому producer CPU pointer ↔ exported FD backing identity остаётся **UNKNOWN/BLOCKED**.
 
@@ -28,7 +46,7 @@ shared_buffer_identity_verified=false
 ## Чтение по порядку
 
 1. [P3-A5-Allocator-and-Queue-Contract-Audit.md](P3-A5-Allocator-and-Queue-Contract-Audit.md) — финальный offline статус allocator, ioctl2 boundary, node и cache contract.
-2. [P3-A4-Proof-Matrix.md](P3-A4-Proof-Matrix.md) — сводная таблица доказательств с уточнёнными статусами.
+2. [P3-A4-Proof-Matrix.md](P3-A4-Proof-Matrix.md) — сводная таблица доказательств с уточнёнными статусами и M0 note.
 3. [P3-A4-Full-Buffer-Provenance.md](P3-A4-Full-Buffer-Provenance.md) — ABI и userspace buffer/ID/offset path с пояснением wrapper.
 4. [P3-A4-Timestamp-Semantics.md](P3-A4-Timestamp-Semantics.md) — ring, request IDs, fence wait, fallback и clock limitations.
 5. [P3-A4-Worklog-20261018.md](P3-A4-Worklog-20261018.md) — исторический ход работ и первоначальный тестовый результат A4.
@@ -77,10 +95,10 @@ shared_buffer_identity_verified=false
 
 Полная команда `python -m unittest discover -s pico/tests -v`: A4 — 176 tests, OK; P3-A5 — **177 tests, OK**. Новый regression запускает только локальный ELF extractor с temp output root и очищает созданный им private build folder. `git diff --check` завершился с code 0; были только Git LF→CRLF warnings. ADB/device вызовов нет.
 
-## Что делать дальше
+## Ранее установленное и следующий шаг
 
 1. Offline search по локальным материалам останавливается здесь: требуемый CSL provider/kernel handler не найден. Продолжать только если появится source drop/ELF с build ID и доказанной привязкой к указанному PICO fingerprint.
-2. Если exact sources отсутствуют, queue-ID return, действительный node, producer/PVR backing identity и cache behavior потребуют отдельной аппаратной проверки с отдельным протоколом. В этой задаче устройство не использовалось.
+2. Если exact sources отсутствуют, queue-ID return, действительный node, producer/PVR backing identity и cache behavior потребуют отдельной аппаратной проверки с отдельным протоколом. P3-A6-M0 подготовил этот протокол, но устройство не использовалось.
 3. Timestamp физическое событие, clock domains, pose, camera-to-factory coordinates, Lighthouse synchronization и активная коррекция остаются отдельными будущими задачами с закрытыми gates.
 
-Следующий инженер должен начать с матрицы доказательств, сверить SHA локальных приватных ELF перед новым анализом и не переиспользовать ни одно из этих значений как runtime acceptance.
+Следующий инженер должен начать с P3-A6 execution gate и матрицы доказательств, получить отдельное разрешение владельца до первого подключения и не переиспользовать ни одно статическое или synthetic значение как runtime acceptance.

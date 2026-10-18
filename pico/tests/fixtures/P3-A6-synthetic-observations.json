@@ -1,0 +1,59 @@
+{
+  "schema": "p3a6.synthetic_observations.v1",
+  "dataset_kind": "synthetic",
+  "expected_qtimer_ns_per_unit": 1.0,
+  "observations": [
+    {
+      "frame_sequence": 20,
+      "qbuf_id_u32": 2147483649,
+      "qbuf_userptr_u64": 18446744071562067969,
+      "dqbuf_userptr_u64": 18446744071562067969,
+      "request_id": 100,
+      "timestamp_source_request_id": 100,
+      "fallback_marker": false,
+      "qtimer_value": 0,
+      "android_mono_before_ns": 499999999990,
+      "android_mono_after_ns": 500000000010,
+      "observer_delivery_mono_ns": 500000001000
+    },
+    {
+      "frame_sequence": 21,
+      "qbuf_id_u32": 7,
+      "qbuf_userptr_u64": 7,
+      "dqbuf_userptr_u64": 4294967304,
+      "request_id": 101,
+      "timestamp_source_request_id": 100,
+      "fallback_marker": true,
+      "qtimer_value": 1000000000,
+      "android_mono_before_ns": 501000099990,
+      "android_mono_after_ns": 501000100010,
+      "observer_delivery_mono_ns": 501000101100
+    },
+    {
+      "frame_sequence": 23,
+      "qbuf_id_u32": null,
+      "qbuf_userptr_u64": null,
+      "dqbuf_userptr_u64": null,
+      "request_id": 102,
+      "timestamp_source_request_id": 100,
+      "fallback_marker": null,
+      "qtimer_value": 1000000000,
+      "android_mono_before_ns": 501000099990,
+      "android_mono_after_ns": 501000100010,
+      "observer_delivery_mono_ns": 501000101200
+    },
+    {
+      "frame_sequence": 24,
+      "qbuf_id_u32": null,
+      "qbuf_userptr_u64": null,
+      "dqbuf_userptr_u64": null,
+      "request_id": 103,
+      "timestamp_source_request_id": 100,
+      "fallback_marker": false,
+      "qtimer_value": 3000000000,
+      "android_mono_before_ns": 503000299990,
+      "android_mono_after_ns": 503000300010,
+      "observer_delivery_mono_ns": 503000301300
+    }
+  ]
+}

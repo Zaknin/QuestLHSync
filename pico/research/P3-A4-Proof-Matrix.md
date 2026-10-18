@@ -41,3 +41,7 @@
 `Producer → HIDL → PVR offsets/IDs and queue calls → FrameMetaDate` доказан на уровне userspace полей, порядка и pointer arithmetic. Но QBUF/DQBUF проходят через vendor ioctl2 envelope; kernel dispatch/copy-back handler не найден, поэтому возвращённый queue key **PARTIAL** и соответствие тому же `buf_info[i]` не гарантируется. Для CSLAlloc найден только публичный неофициальный CamX analogue без PICO build match, поэтому backing-store identity остаётся **UNKNOWN/BLOCKED**. Timestamp physical event, clock sync и pose остаются неизвестными.
 
 Все действующие gates остаются: `observe_only=true`; `exact_time=false`; `live_lighthouse_correction_allowed=false`; `mapping_verified=false`; `pose_verified=false`; `frame_meta_bridge_verified=false`; `physical_event_verified=false`; `shared_buffer_identity_verified=false`.
+
+## P3-A6-M0 note — статусы не повышались
+
+P3-A6-M0 подготовила offline-only synthetic analyzer и тесты; device observations не выполнялись. Поэтому строки matrix для точного `/dev/videoN`, kernel QBUF/DQBUF roundtrip, producer/PVR backing identity, runtime fallback frequency, QTIMER clock conversion и physical SOF/exposure сохраняют статусы, указанные выше. `SYNTHETIC PASS` из [`P3-A6-Acceptance-Matrix.md`](P3-A6-Acceptance-Matrix.md) — только результат обработки искусственных данных и не является дополнительной статической или аппаратной доказательной строкой.
