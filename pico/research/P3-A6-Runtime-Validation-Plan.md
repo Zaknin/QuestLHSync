@@ -4,7 +4,7 @@
 
 ## Статус M0
 
-**OFFLINE PREPARATION READY; HARDWARE NOT RUN.** В этой фазе не было обращения к Pico, ADB, SSH, SteamVR или Lighthouse correction. Подготовлены offline-анализатор синтетических наблюдений, синтетический fixture, fail-closed authorization checker и три документа P3-A6. В репозитории нет runtime collector и нет device-facing команды.
+**OFFLINE PREPARATION READY; HARDWARE NOT RUN.** В этой фазе не было обращения к Pico, ADB, SSH, SteamVR или Lighthouse correction. Подготовлены offline-анализатор синтетических наблюдений, fixture, fail-closed authorization checker и три документа P3-A6. P3-A6-M1 добавил Windows PowerShell 7 read-only inventory collector с mock executor; он не запускался на устройстве. Аппаратное выполнение остаётся закрыто до отдельного прямого разрешения владельца.
 
 P3-A5 остаётся источником статических результатов. Этот план не повышает hardware/runtime статусы и не меняет proof gates.
 
@@ -21,6 +21,7 @@ P3-A5 остаётся источником статических резуль�
 
 - [`pico/tools/p3a6_observation_analyzer.py`](../tools/p3a6_observation_analyzer.py) принимает только `p3a6.synthetic_observations.v1` с `dataset_kind="synthetic"`; неизвестные поля, реальные данные, файлы свыше 16 MiB и наборы свыше 10 000 записей отклоняются.
 - [`pico/tools/p3a6_execution_gate.py`](../tools/p3a6_execution_gate.py) валидирует отдельное, точное, ограниченное по времени и объёму разрешение. Он не выполняет команд и не подключается к устройству. Подтверждение должно быть дано владельцем отдельно; текстовый токен — защита от случайного запуска, а не криптографическая проверка личности.
+- [`pico/tools/collect_p3a6_inventory.ps1`](../tools/collect_p3a6_inventory.ps1) и [`pico/tools/P3A6Inventory.psm1`](../tools/P3A6Inventory.psm1) выполняют только одобренную M1 inventory; каждую ADB-команду предваряет общий Python gate. Контракт, приватное evidence и ограничения описаны в [`P3-A6-M1-Inventory-Collector.md`](P3-A6-M1-Inventory-Collector.md). Mock-тесты не являются runtime evidence.
 - [`pico/tests/fixtures/P3-A6-synthetic-observations.json`](../tests/fixtures/P3-A6-synthetic-observations.json) демонстрирует sign-extended QBUF ID, DQBUF mismatch, sequence gap, повтор QTIMER value, fallback marker и синтетический +100 ppm пример.
 - [`pico/tests/test_p3a6_runtime_analyzer.py`](../tests/test_p3a6_runtime_analyzer.py) проверяет только синтетические кейсы и gate.
 
@@ -36,7 +37,7 @@ python -m pico.tools.p3a6_observation_analyzer pico/tests/fixtures/P3-A6-synthet
 
 ### M1 — Read-only системная инвентаризация
 
-После отдельного одобрения владелец запускает короткую сессию инвентаризации: build fingerprint/версия ОС и kernel, process identity, открытые `/dev/video*` fds, доступные fdinfo и существующие log tags. Не запускать camera session ради инвентаризации. Если PVR не держит node в обычном состоянии, фиксировать `NOT OBSERVED` и остановиться; не запускать pipeline автоматически.
+После отдельного одобрения владелец может запустить только read-only inventory: build fingerprint/версия ОС и kernel, имена/PID QuickCamera/PVR, открытые `/dev/video*` fds и доступные fdinfo. Collector не читает existing log tags; их snapshot относится к отдельному M2 action. Не запускать camera session ради инвентаризации. Если PVR не держит node в обычном состоянии, фиксировать `NOT_OBSERVED` и остановиться; не запускать pipeline автоматически.
 
 Список `/proc/<pid>/fd` может показать несколько camera/request-manager nodes и сам по себе не связывает конкретный fd с объектом `VideoQueueUtil`. Точную связь даёт только уже существующий однозначный log либо отдельно одобренное наблюдение syscall: PID/TID, fd и outer request `0xc01856c0`, после чего fd сопоставляется с `/proc/<pid>/fd/<fd>`. В трассу syscall не включать память кадров.
 
@@ -82,4 +83,4 @@ Gate только валидирует record, он не запускает devi
 
 ## Рекомендация
 
-Offline preparation достаточно для перехода к рассмотрению ограниченной **read-only inventory + existing-log** сессии. Сначала нужно отдельное одобрение владельца на конкретную device session. До такого одобрения Pico не подключать. Закрытие всех контрактов потребует точной attribution node/queue ID и kernel-exposed allocation identity; возможно, passive доступ этого не даст. Физический SOF/exposure требует независимого аппаратного reference и отдельной оценки.
+Offline preparation достаточно только для рассмотрения ограниченной **read-only inventory** сессии. Сначала нужно отдельное одобрение владельца на конкретную device session; отдельная passive-log задача требует отдельного scope. До такого одобрения Pico не подключать. Инвентаризация node не даёт ioctl attribution и не закрывает R1. Остальные контракты потребуют отдельной instrumentation/kernel evidence и kernel-exposed allocation identity; возможно, passive доступ этого не даст. Физический SOF/exposure требует независимого аппаратного reference и отдельной оценки.
