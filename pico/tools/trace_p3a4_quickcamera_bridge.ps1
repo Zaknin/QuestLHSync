@@ -86,18 +86,52 @@ foreach ($target in $pvrTargets) {
         name=$target.Name; symbol=$hits[0]; address=$start; size=$size
     }
 }
-# P3-A4D: decode native C++ callback functor vtable near 0x752c0.
-# ConfigAndAllocBuffers 0x6a3f0/0x6a408 installs this vtable into the
-# callback passed through HIDL; the callback body was not in prior excerpts.
+# P3-A4D: inspect relocation entries for the native HIDL callback functor
+# vtable, constructed in QuickCameraClient::ConfigAndAllocBuffers.
 $readelf = Join-Path (Split-Path -Parent $objdump) 'llvm-readelf.exe'
 if (-not (Test-Path -LiteralPath $readelf)) { throw 'llvm-readelf.exe missing from same NDK' }
 $relocs = @(& $readelf '--relocs' $pvr)
 if ($LASTEXITCODE -ne 0) { throw 'PVR ELF relocation extraction failed' }
 $metadata['callback_relocations'] = @()
 $metadata['callback_candidates'] = @()
+$metadata['callback_vtable_identity_verified'] = $false
+$metadata['shared_buffer_identity_verified'] = $false
 $callbackTargets = [System.Collections.Generic.HashSet[long]]::new()
+
 foreach ($line in $relocs) {
-    $m = [regex]::Match($line, '^\s*([0-9a-fA-F]{8,16})\s+[0-9a-fA-F]+\s+(R_AARCH64_\S+)\s+(.*)
+    $m = [regex]::Match($line, '^\s*([0-9a-fA-F]{8,16})\s+[0-9a-fA-F]+\s+(R_AARCH64_\S+)\s+(.*)$')
+    if (-not $m.Success) { continue }
+    $slot = [Convert]::ToInt64($m.Groups[1].Value, 16)
+    if ($slot -lt 0x752b0 -or $slot -ge 0x75330) { continue }
+    $kind = $m.Groups[2].Value
+    $metadata['callback_relocations'] += @{
+        slot = ('0x{0:x}' -f $slot)
+        type = $kind
+        text = $line.Trim()
+    }
+    if ($kind -ne 'R_AARCH64_RELATIVE') { continue }
+    # Example RELA addend: 0000000000061234 (literal hex).
+    $tail = $m.Groups[3].Value.Trim()
+    $candidateMatch = [regex]::Match($tail, '^(?:0x)?([0-9a-fA-F]{4,16})(?:\s|$)')
+    if (-not $candidateMatch.Success) { continue }
+    $candidate = [Convert]::ToInt64($candidateMatch.Groups[1].Value, 16)
+    if ($candidate -ge 0x30000 -and $candidate -lt 0x74000 -and (($candidate % 4) -eq 0)) {
+        [void]$callbackTargets.Add($candidate)
+    }
+}
+$metadata['callback_vtable_relocation_seen'] = @($metadata['callback_relocations']).Count -gt 0
+foreach ($target in @($callbackTargets | Sort-Object | Select-Object -First 8)) {
+    $n = @($metadata['callback_candidates']).Count
+    $metadata['callback_candidates'] += ('0x{0:x}' -f $target)
+    $windows += @{
+        Name = ('16-pvr-hidl-callback-candidate-' + $n)
+        Bin = 'pvr'
+        From = $target
+        To = ($target + 0x600)
+    }
+}
+# Presence of a candidate is NOT evidence of shared-buffer identity.
+foreach ($w in $windows) {
     if ($w.To -le $w.From -or ($w.To-$w.From) -gt 0x1200) { throw 'Invalid bounded disassembly region' }
     $out = @(& $objdump '-d' '--demangle' '--no-show-raw-insn' ("--start-address=0x{0:x}" -f $w.From) ("--stop-address=0x{0:x}" -f $w.To) $bins[$w.Bin])
     if ($LASTEXITCODE -ne 0 -or $out.Count -lt 7) { throw "Disassembly failed: $($w.Name)" }

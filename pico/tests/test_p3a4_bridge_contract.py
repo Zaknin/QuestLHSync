@@ -75,7 +75,44 @@ class BridgeContractTests(unittest.TestCase):
         self.assertIn("callback_vtable_identity_verified'] = $false", self.src)
         self.assertIn("shared_buffer_identity_verified'] = $false", self.src)
         self.assertIn("Select-Object -First 8", self.src)
-        self.assertIn('To=($target+0x600)', self.src)
+        self.assertRegex(self.src, r'To\s*=\s*\(\$target\s*\+\s*0x600\)')
+
+    def test_native_powershell_parser(self):
+        """Actually parse the .ps1: source-string checks cannot catch syntax bugs."""
+        import os
+        import shutil
+        import subprocess
+        import sys
+
+        pwsh = shutil.which('pwsh') or shutil.which('pwsh.exe')
+        if not pwsh:
+            if sys.platform == 'win32':
+                self.fail('PowerShell 7 executable missing on Windows host')
+            self.skipTest('PowerShell 7 not installed on this non-Windows test host')
+        env = os.environ.copy()
+        env['PICO_A4_SCRIPT'] = str(SCRIPT.resolve())
+        parse_only = (
+            '$tokens = $null; $errors = $null; '
+            '[void][System.Management.Automation.Language.Parser]::ParseFile('
+            '$env:PICO_A4_SCRIPT, [ref]$tokens, [ref]$errors); '
+            'if ($errors.Count) { '
+            '$errors | ForEach-Object { [Console]::Error.WriteLine($_.ToString()) }; '
+            'exit 3 }; exit 0'
+        )
+        run = subprocess.run(
+            [pwsh, '-NoProfile', '-NonInteractive', '-Command', parse_only],
+            env=env, capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(0, run.returncode, run.stdout + '\n' + run.stderr)
+
+    def test_v3_callback_loop_is_complete(self):
+        self.assertIn('foreach ($line in $relocs) {', self.src)
+        self.assertIn('foreach ($w in $windows) {', self.src)
+        self.assertIn('callback_vtable_relocation_seen', self.src)
+        self.assertIn('callback_vtable_identity_verified', self.src)
+        self.assertIn('shared_buffer_identity_verified', self.src)
+        self.assertIn("R_AARCH64_RELATIVE", self.src)
+        self.assertNotIn("(R_AARCH64_\\S+)\\s+(.*)\n", self.src)
 
     def test_essential_regions_are_present(self):
         for address in ('0x664d0', '0x375d0', '0x38670', '0x38bc0',
