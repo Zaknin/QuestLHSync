@@ -114,6 +114,15 @@ class BridgeContractTests(unittest.TestCase):
         self.assertIn("R_AARCH64_RELATIVE", self.src)
         self.assertNotIn("(R_AARCH64_\\S+)\\s+(.*)\n", self.src)
 
+    def test_single_publish_tail_no_duplicate_blocks(self):
+        # Protect against duplicate pasted suffix after the final JSON response.
+        self.assertEqual(self.src.count("foreach ($line in $relocs) {"), 1)
+        self.assertEqual(self.src.count("foreach ($w in $windows) {"), 1)
+        self.assertEqual(self.src.count("Compress-Archive -LiteralPath"), 1)
+        self.assertEqual(self.src.count("Move-Item -LiteralPath $markerPart"), 1)
+        self.assertEqual(self.src.count("status='TRACE_CAPTURED_NOT_PROVEN'; zip="), 1)
+        self.assertTrue(self.src.rstrip().endswith("| ConvertTo-Json -Compress"))
+
     def test_essential_regions_are_present(self):
         for address in ('0x664d0', '0x375d0', '0x38670', '0x38bc0',
                         '0x36860', '0x9494', '0x98e4', '0xa59c'):
