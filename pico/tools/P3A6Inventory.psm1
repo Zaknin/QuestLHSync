@@ -716,8 +716,12 @@ function Invoke-P3A6Inventory {
     }
 
     try {
-        $prefix = if ($TransportId) { @('-t', $TransportId, 'shell') } else { @('shell') }
-        $stateArgs = if ($TransportId) { @('-t', $TransportId, 'get-state') } else { @('get-state') }
+        [string[]]$prefix = @('shell')
+        [string[]]$stateArgs = @('get-state')
+        if ($TransportId) {
+            $prefix = [string[]]@('-t', $TransportId, 'shell')
+            $stateArgs = [string[]]@('-t', $TransportId, 'get-state')
+        }
         $deviceResult = Invoke-P3A6DeviceCommand -State $state -Arguments $stateArgs -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
         if (-not $deviceResult.ok) {
             if ($deviceResult.error_kind -ne 'GATE') {
@@ -741,7 +745,7 @@ function Invoke-P3A6Inventory {
                 $state.stop_reason = 'ADB transport state was not exactly device'
             }
             else {
-                $modelCall = Invoke-P3A6DeviceCommand -State $state -Arguments ($prefix + @('getprop', 'ro.product.model')) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
+                $modelCall = Invoke-P3A6DeviceCommand -State $state -Arguments ([string[]]($prefix + @('getprop', 'ro.product.model'))) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
                 $modelMethod = 'adb [ -t <selected transport-id> ] shell getprop ro.product.model'
                 if (-not $modelCall.ok) {
                     $status = if ($modelCall.error_kind -eq 'PERMISSION_DENIED') { 'PERMISSION_DENIED' } else { 'UNAVAILABLE' }
@@ -765,7 +769,7 @@ function Invoke-P3A6Inventory {
                     )
                     foreach ($spec in $propertySpecs) {
                         if ($state.stop_code) { break }
-                        $result = Invoke-P3A6DeviceCommand -State $state -Arguments ($prefix + $spec.adb) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
+                        $result = Invoke-P3A6DeviceCommand -State $state -Arguments ([string[]]($prefix + [string[]]$spec.adb)) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
                         if (-not $result.ok) {
                             $status = if ($result.error_kind -eq 'PERMISSION_DENIED') { 'PERMISSION_DENIED' } else { 'UNAVAILABLE' }
                             Set-P3A6FieldResult -State $state -Name $spec.name -Status $status -Method $spec.method -Reason $result.error_kind
@@ -805,7 +809,7 @@ function Invoke-P3A6Inventory {
                     $processCommand = Get-P3A6ProcessProbeScript -ProcessBudget $processCandidateLimit
                     $processMethod = 'adb [ -t <selected transport-id> ] shell sh -c <ps PID,NAME filtered to QuickCamera/PVR>'
                     $quotedProcessCommand = ConvertTo-P3A6PosixShellArgument -Value $processCommand
-                    $processCall = Invoke-P3A6DeviceCommand -State $state -Arguments ($prefix + @('sh', '-c', $quotedProcessCommand)) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
+                    $processCall = Invoke-P3A6DeviceCommand -State $state -Arguments ([string[]]($prefix + @('sh', '-c', $quotedProcessCommand))) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
                     if (-not $processCall.ok) {
                         $status = if ($processCall.error_kind -eq 'PERMISSION_DENIED') { 'PERMISSION_DENIED' } else { 'UNAVAILABLE' }
                         Set-P3A6FieldResult -State $state -Name 'process_inventory' -Status $status -Method $processMethod -Reason $processCall.error_kind
@@ -853,7 +857,7 @@ function Invoke-P3A6Inventory {
                                 $probeScript = Get-P3A6ProbeScript -ProcessId ([int]$proc.pid) -RecordBudget $remaining
                                 $probeMethod = 'adb [ -t <selected transport-id> ] shell sh -c <allowlisted /proc/<pid>/fd and fdinfo probe>'
                                 $quotedProbeScript = ConvertTo-P3A6PosixShellArgument -Value $probeScript
-                                $probeCall = Invoke-P3A6DeviceCommand -State $state -Arguments ($prefix + @('sh', '-c', $quotedProbeScript)) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
+                                $probeCall = Invoke-P3A6DeviceCommand -State $state -Arguments ([string[]]($prefix + @('sh', '-c', $quotedProbeScript))) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
                                 if (-not $probeCall.ok) {
                                     $status = if ($probeCall.error_kind -eq 'PERMISSION_DENIED') { 'PERMISSION_DENIED' } else { 'UNAVAILABLE' }
                                     $fdRecord = [ordered]@{ kind = 'fd_inventory'; status = $status; reason = $probeCall.error_kind; process_name = $proc.name; pid = $proc.pid; method = $probeMethod; observed_at_utc = Get-P3A6UtcNow; build_identity = $state.evidence.target.build_fingerprint }

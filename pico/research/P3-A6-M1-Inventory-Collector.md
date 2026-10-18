@@ -13,7 +13,7 @@
 - [`collect_p3a6_inventory.ps1`](../tools/collect_p3a6_inventory.ps1) — CLI для Windows PowerShell 7; без ADB-операций внутри самого сценария dry-run.
 - [`P3A6Inventory.psm1`](../tools/P3A6Inventory.psm1) — collector, native executor, ограниченный allowlist команд и приватная упаковка evidence.
 - [`p3a6_execution_gate_cli.py`](../tools/p3a6_execution_gate_cli.py) — stdin-only bridge, вызывающий существующий [`p3a6_execution_gate.py`](../tools/p3a6_execution_gate.py). Логика и критерии gate не менялись.
-- [`p3a6_inventory_collector.tests.ps1`](../tests/p3a6_inventory_collector.tests.ps1) — 19 PowerShell сценариев с injected mock ADB executor и synthetic executable-path fixtures.
+- [`p3a6_inventory_collector.tests.ps1`](../tests/p3a6_inventory_collector.tests.ps1) — 20 PowerShell сценариев с injected mock ADB executor и synthetic fixtures.
 - [`p3a6_posix_shell_integration.tests.ps1`](../tests/p3a6_posix_shell_integration.tests.ps1) — исполняет сгенерированные process/FD probes в локальном WSL `/bin/sh` на синтетическом proc fixture, проверяя байты вывода и настоящий PowerShell parser.
 - [`test_p3a6_inventory_collector.py`](../tests/test_p3a6_inventory_collector.py) — запускает PowerShell mock harness, POSIX integration harness и отдельно CLI dry-run.
 
@@ -22,6 +22,16 @@
 Native executor запускает только точный путь `$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe`. Перед запуском проверяются непустой абсолютный `LOCALAPPDATA`, нормализованный путь с именем `adb.exe` под ожидаемой `platform-tools` directory и существование обычного файла. Поиск через `Get-Command`, перебор ADB из PATH и fallback на другие копии не используются. Если pinned SDK executable отсутствует или путь нельзя проверить, команда завершается fail-closed до `Process.Start`; это не считается отказом command allowlist.
 
 Offline regression fixture помещает два разных фиктивных `adb.exe` в PATH и отдельный placeholder по pinned SDK path. Она проверяет, что resolver возвращает полный pinned путь, allowlisted вызов не отклоняется из-за PATH duplicates, а при отсутствующем SDK executable возвращается `ExecutableUnavailable` без PATH fallback. Placeholders не являются ADB binaries и не обращаются к ADB server или устройству; аппаратная проверка не запускалась.
+
+## M1.3 correction — preserve native ADB argument vectors
+
+Private incident archive was checked locally: its SHA-256 matched `final.marker.json`; only the requested collection status and model field status/reason were inspected. No private archive, raw output, hash, or per-run values are included in this repository.
+
+The no-transport reproduction confirmed the cause in PowerShell 7: assigning `if (...) { @('shell') }` to `$prefix` enumerates the single item into `System.String`; adding the property array then produces a malformed scalar argument instead of the three-item vector. `$prefix` and `$stateArgs` now use explicit `[string[]]` initialization and conditional reassignment. All four later prefix-plus-command constructions cast to `string[]`, including the metadata queries and process/FD shell probes.
+
+The PowerShell mock executor now invokes the actual `Test-P3A6AllowedAdbArguments` before any responder can return synthetic ADB output. Responders route only exact vector shapes; tests compare exact vectors for `get-state`, model, fingerprint, Android release, kernel release, and generated process/FD probes both without a transport and with `-t 42`. A vector rejected by the native allowlist cannot be satisfied by a permissive mock response.
+
+This is only an offline collector fix. It does not establish a successful device query or change any hardware gate. Offline readiness is `GO` for one separately authorized M1 retry; it is not a hardware `PASS`.
 
 ## Точный будущий контракт запуска
 
@@ -140,6 +150,7 @@ Private archive не предназначен для публикации в Git
 - `/proc`/fdinfo permission denial с прекращением последующих device commands, исчезнувший PID, ошибка `ps` и allowlisted fdinfo;
 - нулевой executor call для dry-run, запрет `adb root` и обязательное POSIX quoting native allowlist;
 - две фиктивные ADB-копии в PATH при pinned SDK path, выбор точного полного пути и fail-closed при отсутствующем SDK executable;
+- фактический native argument allowlist до mock response, точные векторы всех команд без transport ID и с `-t 42`, включая process/FD probes;
 - отсутствие serial/personal-looking данных в archive, неизменные false gates, ACL, ZIP SHA-256/final marker.
 - реальный WSL `/bin/sh` запуск сгенерированных FD/process probes, проверка raw tab bytes, parser roundtrip, Android 10 argv join, `ps` success/error/header framing и отсутствия fallback.
 
@@ -148,3 +159,5 @@ Private archive не предназначен для публикации в Git
 Результат проверки M1.1 (2026-10-18): `python -m unittest discover -s pico/tests -v` — **198/198 PASS**; targeted `python -m unittest pico.tests.test_p3a6_inventory_collector -v` — **2/2 PASS**; PowerShell mock harness — **18/18 PASS**; POSIX integration harness — **PASS**; `git diff --check` — **PASS**. Эти тесты проверяют только локальное поведение и синтетические fixtures.
 
 Результат проверки M1.2 (2026-10-18): `python -m unittest discover -s pico/tests -v` — **198/198 PASS**; targeted `python -m unittest pico.tests.test_p3a6_inventory_collector -v` — **2/2 PASS**; PowerShell mock harness — **19/19 PASS**; прямой WSL POSIX integration harness — **PASS**; `git diff --check` — **PASS**. PATH fixtures содержат только текстовые placeholders; запуск завершается до исполнения fixture. ADB client/executable, ADB server, Pico и camera/PVR pipeline не запускались.
+
+Результат проверки M1.3 (2026-10-18): `python -m unittest discover -s pico/tests -v` — **198/198 PASS**; PowerShell mock harness — **20/20 PASS**; прямой WSL POSIX integration harness — **PASS**; `git diff --check` — **PASS**. До исправления строгий mock harness падал на точном model vector без transport ID, потому что native allowlist отклонял его до responder. После исправления no-transport и `-t 42` vectors проходят тот же allowlist. Это synthetic/offline доказательство; аппаратная инвентаризация не повторялась.
