@@ -67,6 +67,46 @@ class TestElfRelocations(unittest.TestCase):
         with self.assertRaises(ValueError):
             Elf64Arm(make_elf()[:0x500])
 
+    def test_android_relr_bitmap_and_implicit_addends(self):
+        raw = bytearray(make_elf())
+        struct.pack_into('<IIQQQQIIQQ', raw, 0x500 + 64,
+                         0, 0x6fffff00, 0, 0, 0x300, 16, 0, 0, 8, 8)
+        # Direct anchor at +0, then bitmap bits 1 and 4 -> +8 and +0x20.
+        struct.pack_into('<QQ', raw, 0x300, 0x752b0, 1 | (1 << 1) | (1 << 4))
+        for slot in (0x752b0, 0x752b8, 0x752d0):
+            struct.pack_into('<Q', raw, 0x2000 + slot - 0x75000, 0x40400)
+        decoded = Elf64Arm(bytes(raw)).relocated_slots()
+        self.assertEqual(sorted(decoded), [0x752b0, 0x752b8, 0x752d0])
+        for item in decoded.values():
+            self.assertEqual(item['relocation_format'], 'ANDROID_RELR')
+            self.assertEqual(item['candidate_address'], 0x40400)
+            self.assertEqual(item['addend_source'], 'implicit_slot_contents')
+
+    def test_standard_elf_relr_supported(self):
+        raw = bytearray(make_elf())
+        struct.pack_into('<IIQQQQIIQQ', raw, 0x500 + 64,
+                         0, 19, 0, 0, 0x300, 8, 0, 0, 8, 8)
+        struct.pack_into('<Q', raw, 0x300, 0x752d0)
+        struct.pack_into('<Q', raw, 0x22d0, 0x40400)
+        d = Elf64Arm(bytes(raw)).relocated_slots()
+        self.assertEqual(d[0x752d0]['relocation_format'], 'RELR')
+        self.assertEqual(d[0x752d0]['candidate_address'], 0x40400)
+
+    def test_relr_bitmap_without_anchor_fails_closed(self):
+        raw = bytearray(make_elf())
+        struct.pack_into('<IIQQQQIIQQ', raw, 0x500 + 64,
+                         0, 0x6fffff00, 0, 0, 0x300, 8, 0, 0, 8, 8)
+        struct.pack_into('<Q', raw, 0x300, 3)
+        with self.assertRaisesRegex(ValueError, 'bitmap before anchor'):
+            Elf64Arm(bytes(raw)).relocated_slots()
+
+    def test_relr_invalid_entry_size_fails_closed(self):
+        raw = bytearray(make_elf())
+        struct.pack_into('<IIQQQQIIQQ', raw, 0x500 + 64,
+                         0, 0x6fffff00, 0, 0, 0x300, 16, 0, 0, 8, 16)
+        with self.assertRaisesRegex(ValueError, 'RELR section dimensions'):
+            Elf64Arm(bytes(raw)).relocated_slots()
+
 
 class TestIntegrity(unittest.TestCase):
     def test_digest_and_sidecar(self):

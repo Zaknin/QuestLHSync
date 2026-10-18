@@ -25,7 +25,7 @@ CANONICAL = r'\\192.168.23.63\Torrents\Codex\PicoLHSync\P3-A'
 SLOTS_LOW, SLOTS_HIGH = 0x752B0, 0x75330
 R_AARCH64_RELATIVE = 1027
 PT_LOAD, PF_X = 1, 1
-SHT_RELA, SHT_REL = 4, 9
+SHT_RELA, SHT_REL, SHT_RELR, SHT_ANDROID_RELR = 4, 9, 19, 0x6fffff00
 
 
 def sha256_file(path: Path) -> str:
@@ -84,9 +84,58 @@ class Elf64Arm:
                    for flags, _off, vaddr, filesz, _memsz in self.segments)
 
     def relocated_slots(self) -> dict[int, dict]:
-        """Use ELF relocation sections, not llvm-readelf's abbreviated text."""
+        """Parse normal REL/RELA and ELF/Android RELR compact relocation bitmaps.
+
+        Important: Android 10 vendor binaries often use ANDROID_RELR for
+        R_AARCH64_RELATIVE. llvm-readelf expands them into apparent RELATIVE
+        entries without addends, and SHT_RELA/SHT_REL-only parsing misses them.
+        """
         slots: dict[int, dict] = {}
+
+        def record(slot: int, fmt: str, source: str, addend: int | None) -> None:
+            if not (SLOTS_LOW <= slot < SLOTS_HIGH):
+                return
+            if slot & 7:
+                raise ValueError(f'Unaligned relative relocation slot 0x{slot:x}')
+            if slot in slots:
+                raise ValueError(f'Duplicate relative relocation for 0x{slot:x}')
+            raw_word = self.unpack('<Q', self.va_to_file(slot, 8))[0]
+            candidate = addend if addend is not None else raw_word
+            executable = candidate >= 0 and self.executable(candidate)
+            slots[slot] = {
+                'slot': f'0x{slot:x}',
+                'relocation_format': fmt,
+                'addend_source': source,
+                'addend_hex': f'0x{candidate & 0xffffffffffffffff:x}',
+                'raw_slot_hex': f'0x{raw_word:x}',
+                'candidate_executable': executable,
+                'candidate_address': candidate if executable else None,
+            }
+
         for typ, off, size, entsize in self.sections:
+            if typ in (SHT_RELR, SHT_ANDROID_RELR):
+                if size % 8 or entsize not in (0, 8):
+                    raise ValueError('Invalid ELF RELR section dimensions')
+                if size // 8 > 2_000_000:
+                    raise ValueError('Excessive ELF RELR entries')
+                base: int | None = None
+                fmt = 'ANDROID_RELR' if typ == SHT_ANDROID_RELR else 'RELR'
+                for pos in range(off, off + size, 8):
+                    word = self.unpack('<Q', pos)[0]
+                    if (word & 1) == 0:
+                        if word & 7:
+                            raise ValueError('Unaligned ELF RELR anchor')
+                        record(word, fmt, 'implicit_slot_contents', None)
+                        base = word + 8
+                    else:
+                        if base is None:
+                            raise ValueError('ELF RELR bitmap before anchor')
+                        # Bits 1..63 describe 63 successive pointer-sized slots.
+                        for bit in range(63):
+                            if word & (1 << (bit + 1)):
+                                record(base + bit * 8, fmt, 'implicit_slot_contents', None)
+                        base += 63 * 8
+                continue
             if typ not in (SHT_REL, SHT_RELA):
                 continue
             record_size = 24 if typ == SHT_RELA else 16
@@ -101,21 +150,11 @@ class Elf64Arm:
                 else:
                     slot, info = self.unpack('<QQ', pos)
                     addend = None
-                if not (SLOTS_LOW <= slot < SLOTS_HIGH and (info & 0xffffffff) == R_AARCH64_RELATIVE):
+                if (info & 0xffffffff) != R_AARCH64_RELATIVE:
                     continue
-                if slot in slots:
-                    raise ValueError(f'Duplicate relative relocation for 0x{slot:x}')
-                raw_word = self.unpack('<Q', self.va_to_file(slot, 8))[0]
-                candidate = addend if addend is not None else raw_word
-                slots[slot] = {
-                    'slot': f'0x{slot:x}',
-                    'relocation_format': 'RELA' if typ == SHT_RELA else 'REL',
-                    'addend_source': 'explicit_rela' if typ == SHT_RELA else 'implicit_slot_contents',
-                    'addend_hex': f'0x{candidate & 0xffffffffffffffff:x}',
-                    'raw_slot_hex': f'0x{raw_word:x}',
-                    'candidate_executable': candidate >= 0 and self.executable(candidate),
-                    'candidate_address': candidate if candidate >= 0 and self.executable(candidate) else None,
-                }
+                record(slot, 'RELA' if typ == SHT_RELA else 'REL',
+                       'explicit_rela' if typ == SHT_RELA else 'implicit_slot_contents',
+                       addend)
         return slots
 
 
@@ -284,6 +323,8 @@ def run(argv: list[str] | None = None) -> int:
         'physical_event_verified': False,
         'relocation_slots_requested': len(target_slots),
         'relocation_slots_parsed': sum(rec['status'] == 'RELOCATION_PARSED' for rec in records),
+        'relocation_section_types': sorted({f'0x{typ:x}' for typ, _off, _size, _ent in elf.sections
+                                           if typ in (SHT_REL, SHT_RELA, SHT_RELR, SHT_ANDROID_RELR)}),
         'callback_candidate_addresses': [f'0x{a:x}' for a in candidates],
         'records': records,
     }
