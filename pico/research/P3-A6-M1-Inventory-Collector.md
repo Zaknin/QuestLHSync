@@ -4,7 +4,7 @@
 
 ## Статус
 
-**PREPARED OFFLINE; NOT RUN ON PICO.** Подготовлен PowerShell 7 collector и mock-based regression suite. В этой задаче не выполнялись ADB-команды, подключение к Pico, запуск camera/PVR services, SteamVR или tracking pipeline. Настоящих runtime observations нет; R1 остаётся `UNKNOWN/BLOCKED`.
+**PREPARED OFFLINE; NOT RUN ON PICO.** Подготовлены PowerShell 7 collector, mock regression suite и локальный POSIX `/bin/sh` integration test для сгенерированных probes. В этой задаче не выполнялись ADB-команды, подключение к Pico или ADB server, запуск camera/PVR services, SteamVR или tracking pipeline. Настоящих runtime observations нет; R1 остаётся `UNKNOWN/BLOCKED`.
 
 Инструментальный контракт описывает только действие `read-only-inventory`. Approval не создан, аппаратное выполнение не одобрено. `-DryRun`/`--dry-run` не читает approval, не создаёт evidence и не вызывает ADB executor.
 
@@ -14,7 +14,8 @@
 - [`P3A6Inventory.psm1`](../tools/P3A6Inventory.psm1) — collector, native executor, ограниченный allowlist команд и приватная упаковка evidence.
 - [`p3a6_execution_gate_cli.py`](../tools/p3a6_execution_gate_cli.py) — stdin-only bridge, вызывающий существующий [`p3a6_execution_gate.py`](../tools/p3a6_execution_gate.py). Логика и критерии gate не менялись.
 - [`p3a6_inventory_collector.tests.ps1`](../tests/p3a6_inventory_collector.tests.ps1) — 18 PowerShell сценариев с injected mock ADB executor.
-- [`test_p3a6_inventory_collector.py`](../tests/test_p3a6_inventory_collector.py) — запускает collector harness через PowerShell 7 и отдельно проверяет CLI dry-run.
+- [`p3a6_posix_shell_integration.tests.ps1`](../tests/p3a6_posix_shell_integration.tests.ps1) — исполняет сгенерированные process/FD probes в локальном WSL `/bin/sh` на синтетическом proc fixture, проверяя байты вывода и настоящий PowerShell parser.
+- [`test_p3a6_inventory_collector.py`](../tests/test_p3a6_inventory_collector.py) — запускает PowerShell mock harness, POSIX integration harness и отдельно CLI dry-run.
 
 ## Точный будущий контракт запуска
 
@@ -77,6 +78,16 @@ Native executor принимает только точные inventory command s
 
 `ps -A -o PID,NAME`, `awk`, `readlink`, `getprop` и procfs доступность конкретной PICO OS заранее не доказаны. Ошибка `ps` или пустой ответ фиксируется как `UNAVAILABLE`, не как успешная инвентаризация с нулём процессов. Если команда отсутствует/запрещена, соответствующее поле фиксируется как unavailable/permission denied и run завершается без fallback к более широкому сбору.
 
+## P3-A6-M1.1 — POSIX shell и ADB argument contract
+
+В probe был воспроизведён протокольный дефект: `printf '%s\n' "$1"` печатал в FD/FDINFO/FDINFO_STATUS значения буквальные `\t`. Исправлено на отдельные фиксированные `printf` formats с табами в format string; все поля передаются отдельными `%s` arguments. Непроверенные значения не становятся format string или управляющими последовательностями. Parser по-прежнему требует точные поля, табы и allowlisted значения.
+
+Проверка AOSP Android 10 выявила отдельную границу quoting: Android 10 ADB client собирает remote command соединением `shell` argv через пробелы без escaping; adbd передаёт полученную строку в `/system/bin/sh -c`. Поэтому многострочный probe передаётся как один POSIX single-quoted argument (с безопасным `'\''`-разрывом для внутренних одинарных кавычек). Native command allowlist принимает только точные generated probes в этом quoted form и отклоняет прежнюю unquoted форму. AOSP refs: [Android 10 ADB client `commandline.cpp`](https://android.googlesource.com/platform/system/core/+/refs/heads/android10-mainline-resolv-release/adb/client/commandline.cpp), [Android 10 adbd `shell_service.cpp`](https://android.googlesource.com/platform/system/core/+/android10-release/adb/daemon/shell_service.cpp). AOSP Toybox Android 10 help документирует `ps -A` и `-o` с полями `PID`/`NAME` ([source](https://android.googlesource.com/platform/external/toybox/+/refs/heads/android10-dev/generated/help.h)); vendor-совместимость конкретной PICO OS этим не установлена.
+
+Локальный integration harness собрал фактический argv shape `shell sh -c <quoted multiline script>`, воспроизвёл Android 10 ADB join через пробелы и передал итоговую команду настоящему WSL `/bin/sh`. PowerShell `ProcessStartInfo.ArgumentList` передал remote command как один аргумент с newlines и shell quotes; этот host-side boundary проверен на WSL, не на `adb.exe`. В FD probe используются только синтетические `/tmp/...` proc/fdinfo files и test `readlink`; реальный `/proc` не читался. Зафиксированы сырые stdout bytes: FD разделён байтами `0x09`, последовательность `\\t` отсутствует, затем те же bytes успешно прошли настоящий `Convert-P3A6ProbeOutput` и сохранили node/allowlisted fdinfo. Process probe прогнан с фиксированным `ps -A -o PID,NAME`: valid header/rows дают `OBSERVED`; nonzero exit с частичным stdout и неправильный header дают только `UNAVAILABLE`. Fixture проверяет, что probe делает ровно один вызов этой команды на каждый запуск; fallback не добавляется.
+
+Это доказывает local POSIX parsing/quoting на WSL и поведение AOSP-совместимого argv join, но не выполняет ADB client/server, не запускает Android `/system/bin/sh` или vendor Toybox на Pico и не доказывает совместимость конкретной прошивки. WSL fixture не является device observation или experimental PASS. Перед первым одобренным запуском следует ожидать `UNAVAILABLE`/`BLOCKED`, если target shell, `ps`, `awk`, `readlink` или procfs имеют другую семантику.
+
 ## Права и условия будущего сеанса
 
 - На Windows нужны PowerShell 7, Python с доступным из PATH модулем `pico.tools.p3a6_execution_gate_cli`, одна однозначная копия `adb.exe` в PATH, доступ к `LOCALAPPDATA` и возможность задать private DACL на новую run-папку. Collector не запрашивает elevation; если ACL создать нельзя, он блокирует запуск до ADB.
@@ -113,7 +124,7 @@ Private archive не предназначен для публикации в Git
 
 Инвентаризация не измеряет CSL request ID, QTIMER, fallback, `FrameMetaDate`, Android monotonic clock или delivery latency. Она не доказывает backing allocation identity/cache coherency и не задаёт физический SOF/exposure start. Для них нужны отдельные разрешённые исследования; физическое событие требует version-matched semantics или внешнего аппаратного reference.
 
-## Mock-тесты
+## Regression и integration tests
 
 `python -m unittest pico.tests.test_p3a6_inventory_collector -v` запускает настоящий PowerShell collector с mock responses и проверяет:
 
@@ -121,7 +132,10 @@ Private archive не предназначен для публикации в Git
 - action scope escape, wrong runtime model и несколько устройств;
 - timeout/partial output, ADB error, duration/record limits;
 - `/proc`/fdinfo permission denial с прекращением последующих device commands, исчезнувший PID, ошибка `ps` и allowlisted fdinfo;
-- нулевой executor call для dry-run и запрет `adb root` native allowlist;
+- нулевой executor call для dry-run, запрет `adb root` и обязательное POSIX quoting native allowlist;
 - отсутствие serial/personal-looking данных в archive, неизменные false gates, ACL, ZIP SHA-256/final marker.
+- реальный WSL `/bin/sh` запуск сгенерированных FD/process probes, проверка raw tab bytes, parser roundtrip, Android 10 argv join, `ps` success/error/header framing и отсутствия fallback.
 
-Все выше — offline synthetic/mock results; тесты не запускают `adb.exe` и не создают experimental PASS.
+Все проверки offline; integration использует только синтетический proc fixture и локальный WSL shell. `adb.exe`, ADB server, Pico и её camera/PVR pipeline не запускались. Результаты не создают experimental PASS и не повышают R1–R9.
+
+Результат проверки M1.1 (2026-10-18): `python -m unittest discover -s pico/tests -v` — **198/198 PASS**; targeted `python -m unittest pico.tests.test_p3a6_inventory_collector -v` — **2/2 PASS**; PowerShell mock harness — **18/18 PASS**; POSIX integration harness — **PASS**; `git diff --check` — **PASS**. Эти тесты проверяют только локальное поведение и синтетические fixtures.

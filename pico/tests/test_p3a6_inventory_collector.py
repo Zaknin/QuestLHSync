@@ -38,6 +38,28 @@ class TestP3A6ReadOnlyInventoryCollector(unittest.TestCase):
         self.assertEqual(dry_run.returncode, 3, msg=f'CLI dry-run must exit without device access.\n{dry_run.stderr}')
         self.assertIn('"status":"DRY_RUN"', dry_run.stdout)
 
+    def test_generated_shell_probes_under_local_posix_shell(self):
+        pwsh = shutil.which('pwsh')
+        wsl = shutil.which('wsl.exe')
+        if not pwsh or not wsl:
+            self.skipTest('PowerShell 7 and WSL POSIX /bin/sh are required for this offline integration test')
+        repo = Path(__file__).resolve().parents[2]
+        harness = repo / 'pico' / 'tests' / 'p3a6_posix_shell_integration.tests.ps1'
+        completed = subprocess.run(
+            [pwsh, '-NoProfile', '-File', str(harness)],
+            cwd=repo,
+            text=True,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=f'Generated POSIX shell integration failed.\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}',
+        )
+        self.assertIn('P3-A6 local POSIX shell integration:', completed.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()

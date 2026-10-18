@@ -160,6 +160,14 @@ function New-P3A6PrivateRunDirectory {
     return $runPath
 }
 
+function ConvertTo-P3A6PosixShellArgument {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+
+    # ADB shell joins argv into a remote command string. Quote this one word for
+    # the remote POSIX shell; never interpret data as printf or shell escapes.
+    return "'" + $Value.Replace("'", "'\''") + "'"
+}
+
 function Test-P3A6AllowedAdbArguments {
     param([string[]]$Arguments)
 
@@ -176,14 +184,16 @@ function Test-P3A6AllowedAdbArguments {
     if ($Arguments.Count -ne ($offset + 4) -or $Arguments[$offset + 1] -cne 'sh' -or $Arguments[$offset + 2] -cne '-c') { return $false }
 
     $shellCommand = [string]$Arguments[$offset + 3]
-    if ($shellCommand -match '(?s)^# pico-p3a6-process-probe\r?\nlimit=(\d{1,4})\r?\n') {
+    if ($shellCommand -match "(?s)^'# pico-p3a6-process-probe\r?\nlimit=(\d{1,4})\r?\n") {
         $limit = [int]$Matches[1]
-        return $shellCommand -ceq (Get-P3A6ProcessProbeScript -ProcessBudget $limit)
+        $expected = ConvertTo-P3A6PosixShellArgument -Value (Get-P3A6ProcessProbeScript -ProcessBudget $limit)
+        return $shellCommand -ceq $expected
     }
-    if ($shellCommand -match '(?m)^# pico-p3a6-fd-probe\r?\npid=(\d+)\r?\nlimit=(\d+)\r?\n') {
+    if ($shellCommand -match "(?s)^'# pico-p3a6-fd-probe\r?\npid=(\d+)\r?\nlimit=(\d+)\r?\n") {
         $processId = [int]$Matches[1]
         $limit = [int]$Matches[2]
-        return $shellCommand -ceq (Get-P3A6ProbeScript -ProcessId $processId -RecordBudget $limit)
+        $expected = ConvertTo-P3A6PosixShellArgument -Value (Get-P3A6ProbeScript -ProcessId $processId -RecordBudget $limit)
+        return $shellCommand -ceq $expected
     }
     return $false
 }
@@ -397,7 +407,12 @@ access_failed=0
 seen_video=0
 emit_data() {
   if [ "$records" -ge "$limit" ]; then return 1; fi
-  printf '%s\n' "$1"
+  case "$1" in
+    FD) printf 'P3A6\tFD\t%s\t%s\n' "$2" "$3" ;;
+    FDINFO_STATUS) printf 'P3A6\tFDINFO_STATUS\t%s\t%s\n' "$2" "$3" ;;
+    FDINFO) printf 'P3A6\tFDINFO\t%s\t%s\t%s\n' "$2" "$3" "$4" ;;
+    *) return 1 ;;
+  esac
   records=$((records + 1))
   return 0
 }
@@ -414,15 +429,15 @@ for link in /proc/$pid/fd/*; do
     /dev/video*)
       case "$target" in /dev/video[0-9]*) ;; *) continue ;; esac
       seen_video=1
-      if ! emit_data "P3A6\tFD\t$fd\t$target"; then break; fi
+      if ! emit_data FD "$fd" "$target"; then break; fi
       info="/proc/$pid/fdinfo/$fd"
       if [ ! -e "$info" ]; then
-        emit_data "P3A6\tFDINFO_STATUS\t$fd\tUNAVAILABLE" || break
+        emit_data FDINFO_STATUS "$fd" UNAVAILABLE || break
         continue
       fi
       if [ ! -r "$info" ]; then
         access_failed=1
-        emit_data "P3A6\tFDINFO_STATUS\t$fd\tPERMISSION_DENIED" || break
+        emit_data FDINFO_STATUS "$fd" PERMISSION_DENIED || break
         break
       fi
       info_count=0
@@ -432,16 +447,16 @@ for link in /proc/$pid/fd/*; do
           pos|flags|mnt_id|ino)
             case "$key:$value" in
               pos:[0-9]*|flags:0x[0-9a-fA-F]*|flags:[0-7]*|mnt_id:[0-9]*|ino:[0-9]*)
-                if emit_data "P3A6\tFDINFO\t$fd\t$key\t$value"; then info_count=$((info_count + 1)); else break; fi
+                if emit_data FDINFO "$fd" "$key" "$value"; then info_count=$((info_count + 1)); else break; fi
                 ;;
           esac
           ;;
         esac
       done < "$info"
       if [ "$info_count" -gt 0 ]; then
-        emit_data "P3A6\tFDINFO_STATUS\t$fd\tOBSERVED" || break
+        emit_data FDINFO_STATUS "$fd" OBSERVED || break
       else
-        emit_data "P3A6\tFDINFO_STATUS\t$fd\tUNAVAILABLE" || break
+        emit_data FDINFO_STATUS "$fd" UNAVAILABLE || break
       fi
       ;;
   esac
@@ -766,7 +781,8 @@ function Invoke-P3A6Inventory {
                     $processCandidateLimit = [Math]::Min(200, $maxRecordsEffective - $state.records.Count - 1)
                     $processCommand = Get-P3A6ProcessProbeScript -ProcessBudget $processCandidateLimit
                     $processMethod = 'adb [ -t <selected transport-id> ] shell sh -c <ps PID,NAME filtered to QuickCamera/PVR>'
-                    $processCall = Invoke-P3A6DeviceCommand -State $state -Arguments ($prefix + @('sh', '-c', $processCommand)) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
+                    $quotedProcessCommand = ConvertTo-P3A6PosixShellArgument -Value $processCommand
+                    $processCall = Invoke-P3A6DeviceCommand -State $state -Arguments ($prefix + @('sh', '-c', $quotedProcessCommand)) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
                     if (-not $processCall.ok) {
                         $status = if ($processCall.error_kind -eq 'PERMISSION_DENIED') { 'PERMISSION_DENIED' } else { 'UNAVAILABLE' }
                         Set-P3A6FieldResult -State $state -Name 'process_inventory' -Status $status -Method $processMethod -Reason $processCall.error_kind
@@ -813,7 +829,8 @@ function Invoke-P3A6Inventory {
                                 if ($remaining -le 0) { $state.stop_code = 'PARTIAL_RECORD_LIMIT_REACHED'; $state.partial = $true; break }
                                 $probeScript = Get-P3A6ProbeScript -ProcessId ([int]$proc.pid) -RecordBudget $remaining
                                 $probeMethod = 'adb [ -t <selected transport-id> ] shell sh -c <allowlisted /proc/<pid>/fd and fdinfo probe>'
-                                $probeCall = Invoke-P3A6DeviceCommand -State $state -Arguments ($prefix + @('sh', '-c', $probeScript)) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
+                                $quotedProbeScript = ConvertTo-P3A6PosixShellArgument -Value $probeScript
+                                $probeCall = Invoke-P3A6DeviceCommand -State $state -Arguments ($prefix + @('sh', '-c', $quotedProbeScript)) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
                                 if (-not $probeCall.ok) {
                                     $status = if ($probeCall.error_kind -eq 'PERMISSION_DENIED') { 'PERMISSION_DENIED' } else { 'UNAVAILABLE' }
                                     $fdRecord = [ordered]@{ kind = 'fd_inventory'; status = $status; reason = $probeCall.error_kind; process_name = $proc.name; pid = $proc.pid; method = $probeMethod; observed_at_utc = Get-P3A6UtcNow; build_identity = $state.evidence.target.build_fingerprint }

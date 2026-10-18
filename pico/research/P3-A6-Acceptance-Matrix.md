@@ -12,7 +12,7 @@
 | M0-04 | Clock affine fit, bracket width, calibrated ppm, wrap/reset rejection | `SYNTHETIC PASS` | Синтетический +100 ppm; без scale drift заблокирован. Никакого Pico clock result нет |
 | M0-05 | Hardware execution gate defaults closed, exact scope + time/count bounds | `SYNTHETIC PASS` | Tests validate gate contract; настоящего approval record/direct confirmation нет |
 | M0-06 | Device node, runtime queue contract, mapping identity, timestamp origin, frame delivery | `NOT RUN` | Pico и device interfaces не использовались |
-| M1-01 | PS7 inventory collector gate, device selection, read-only command allowlist, bounded/private partial evidence | `MOCK PASS OFFLINE` | 18 PowerShell mock scenarios + CLI dry-run test; collector не запускался на Pico, ADB не выполнялся; evidence не является experimental result |
+| M1-01 | PS7 inventory collector gate, device selection, read-only command allowlist, bounded/private partial evidence, POSIX probe protocol and Android 10 shell argv quoting | `MOCK + POSIX INTEGRATION PASS OFFLINE` | Full Python suite 198/198 PASS; 18 PowerShell mock scenarios + CLI dry-run + actual generated FD/process probes under local WSL `/bin/sh`, exact tab-byte/parser roundtrip, AOSP Android 10 argv-join emulation and `ps` status/header fixtures. ADB client/server and Pico не запускались; evidence не является experimental result |
 
 ## Будущие runtime acceptance
 
@@ -46,4 +46,4 @@ physical_event_verified=false
 
 `SYNTHETIC PASS` не переводится в `STATIC PASS` или hardware `PASS`. Повышение runtime статуса допустимо только после review приватного evidence package по этой матрице и соответствующей отдельной approval scope.
 
-`MOCK PASS OFFLINE` подтверждает только поведение collector на injected fixture. Оно не повышает R1–R9. Открытый `/dev/videoN` fd без наблюдённого `ioctl(fd,0xc01856c0,...)` остаётся недостаточным для R1.
+`MOCK + POSIX INTEGRATION PASS OFFLINE` подтверждает поведение collector на injected fixtures и POSIX shell parsing/quoting в WSL. Это не является ADB-to-device result и не повышает R1–R9. Открытый `/dev/videoN` fd без наблюдённого `ioctl(fd,0xc01856c0,...)` остаётся недостаточным для R1.

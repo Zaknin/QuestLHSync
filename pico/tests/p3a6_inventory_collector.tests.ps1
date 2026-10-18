@@ -272,11 +272,15 @@ $module = Get-Module P3A6Inventory
 $allowedDevices = & $module { Test-P3A6AllowedAdbArguments -Arguments @('get-state') }
 $allowedProperty = & $module { Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'getprop', 'ro.build.fingerprint') }
 $processCommand = & $module { Get-P3A6ProcessProbeScript -ProcessBudget 191 }
-$allowedProcess = & $module { param($text) Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'sh', '-c', $text) } $processCommand
+$quotedProcessCommand = & $module { param($text) ConvertTo-P3A6PosixShellArgument -Value $text } $processCommand
+$allowedProcess = & $module { param($text) Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'sh', '-c', $text) } $quotedProcessCommand
+$rawProcessRejected = -not (& $module { param($text) Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'sh', '-c', $text) } $processCommand)
 $probeScript = & $module { Get-P3A6ProbeScript -ProcessId 321 -RecordBudget 17 }
-$allowedProbe = & $module { param($text) Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'sh', '-c', $text) } $probeScript
+$quotedProbeScript = & $module { param($text) ConvertTo-P3A6PosixShellArgument -Value $text } $probeScript
+$allowedProbe = & $module { param($text) Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'sh', '-c', $text) } $quotedProbeScript
+$rawProbeRejected = -not (& $module { param($text) Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'sh', '-c', $text) } $probeScript)
 $rejectedShell = & $module { Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'sh', '-c', 'ps -A -o PID,NAME | awk -v max=1 bad; adb root') }
-Assert-True ($allowedDevices -and $allowedProperty -and $allowedProcess -and $allowedProbe -and -not $rejectedShell) 'native command allowlist must accept only exact inventory command shapes'
+Assert-True ($allowedDevices -and $allowedProperty -and $allowedProcess -and $allowedProbe -and $rawProcessRejected -and $rawProbeRejected -and -not $rejectedShell) 'native command allowlist must accept only exact POSIX-quoted inventory command shapes'
 $passCount++
 
 # Successful mock data is allowlisted; raw ADB output, serial and personal-looking stderr are not saved.
@@ -300,6 +304,8 @@ Assert-True (@($evidence.records | Where-Object { $_.build_identity -ne $evidenc
 $videoFd = @($evidence.records | Where-Object { $_.kind -eq 'video_fd' })[0]
 Assert-True ($videoFd.node -eq '/dev/video3' -and $videoFd.fdinfo.fields.flags.value -eq '02000002') 'allowlisted fd and octal flags must be captured'
 Assert-True ($videoFd.association -eq 'NOT_ATTRIBUTED_TO_VIDEOQUEUEUTIL_IOCTL') 'open node must not be claimed as ioctl-attributed'
+$quotedProbeCalls = @($case.Calls | Where-Object { $_.Arguments[-1] -match "^'# pico-p3a6-(?:process|fd)-probe\r?\n" })
+Assert-True ($quotedProbeCalls.Count -ge 2) 'collector must pass generated process and FD probes as POSIX-quoted single ADB shell arguments'
 $marker = Get-Content -LiteralPath $case.Result.marker_path -Raw | ConvertFrom-Json -AsHashtable
 $actualHash = (Get-FileHash -LiteralPath $case.Result.archive_path -Algorithm SHA256).Hash.ToLowerInvariant()
 Assert-True ($marker.archive_sha256 -eq $actualHash) 'final marker must bind the archive SHA-256'
