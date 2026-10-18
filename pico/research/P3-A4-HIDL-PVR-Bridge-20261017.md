@@ -19,9 +19,9 @@ On Windows PowerShell 7:
     Set-Location C:\Dev\PicoLHSync
     git pull --ff-only
     python -m unittest pico.tests.test_p3a4_bridge_contract -v
-    pwsh -NoProfile -File .\pico\tools\trace_p3a4_quickcamera_bridge.ps1
+    pwsh -NoProfile -File .\pico\tools\trace_p3a4_quickcamera_bridge.ps1 -OutputRoot $env:P3_A_OUTPUT_ROOT
 
-All disassembly excerpts and JSON are **private**, with local staging under pico/build and canonical SMB evidence under \\192.168.23.63\Torrents\Codex\PicoLHSync\P3-A; ZIP and JSON committed by .part, SHA readback, then sidecar .sha256 **last**. Google Drive /Codex is only a downstream mirrored reader. All gates remain false and the manifest reports TRACE_CAPTURED_NOT_PROVEN; successful extraction is NOT proof of actual optical event or live corrected pose.
+Before launch, configure `P3_A_OUTPUT_ROOT` to a private output directory outside the repository. All disassembly excerpts and JSON are **private**, with local staging under pico/build and publication to that configured output root; ZIP and JSON are committed by .part, SHA readback, then sidecar .sha256 **last**. A downstream mirror is only a reader. All gates remain false and the manifest reports TRACE_CAPTURED_NOT_PROVEN; successful extraction is NOT proof of actual optical event or live corrected pose.
 
 The next review must inspect the disassembly windows and symbol xrefs to show or reject an exact byte-level connection from CSLFenceCallback metadata at byte 0 of the native per-frame buffer to PVR QuickCameraClient DeQueueFrame first word. If no symbol survived stripping, inspect callsite branch targets on the pinned P2 ELF, do not guess mapping or enable tracking.
 

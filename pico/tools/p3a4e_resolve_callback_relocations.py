@@ -21,7 +21,7 @@ import zipfile
 from datetime import datetime, timezone
 
 PIN_PVR = 'cf9e507f412ec33d62c2f720669fcdd093f1822c9cbf3adefd0a26a6b4d072ee'
-CANONICAL = r'\\192.168.23.63\Torrents\Codex\PicoLHSync\P3-A'
+OUTPUT_ROOT_ENV = 'P3_A_OUTPUT_ROOT'
 SLOTS_LOW, SLOTS_HIGH = 0x752B0, 0x75330
 R_AARCH64_RELATIVE = 1027
 PT_LOAD, PF_X = 1, 1
@@ -34,6 +34,28 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             h.update(chunk)
     return h.hexdigest()
+
+
+def resolve_output_root(output_root: Path | None, repo: Path,
+                        env: dict[str, str] | None = None) -> Path:
+    """Require an explicit private output path outside the resolved repository."""
+    environment = os.environ if env is None else env
+    candidate = output_root
+    if candidate is None:
+        configured = environment.get(OUTPUT_ROOT_ENV)
+        if not configured or not configured.strip():
+            raise ValueError(f'Set {OUTPUT_ROOT_ENV} or pass --output-root; STOP')
+        candidate = Path(configured)
+    candidate = Path(candidate).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError('Output root must be an absolute path; STOP')
+    resolved = candidate.resolve(strict=False)
+    repository = Path(repo).resolve()
+    try:
+        resolved.relative_to(repository)
+    except ValueError:
+        return resolved
+    raise ValueError('Output root must be outside the repository; STOP')
 
 
 class Elf64Arm:
@@ -260,16 +282,20 @@ def atomic_publish(stage: Path, destination: Path, run: str, report: dict, excer
 
 def run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output-root', type=Path, default=Path(CANONICAL))
+    parser.add_argument('--output-root', type=Path, help=f'private destination (or set {OUTPUT_ROOT_ENV})')
     parser.add_argument('--manifest', type=Path, help='SHA-verified v3 owner manifest; auto-locate newest if omitted')
     parser.add_argument('--pvr', type=Path, help='Private ELF path; SHA-pinned in all modes')
     args = parser.parse_args(argv)
     repo = Path(__file__).resolve().parents[2]
+    try:
+        output_root = resolve_output_root(args.output_root, repo)
+    except ValueError as exc:
+        parser.error(str(exc))
     build = repo / 'pico' / 'build'
     pvr = args.pvr if args.pvr is not None else find_pvr(build)
     if sha256_file(pvr) != PIN_PVR:
         raise ValueError('PVR source hash does not match the pinned P2 ELF')
-    manifest = args.manifest if args.manifest is not None else find_manifest(args.output_root)
+    manifest = args.manifest if args.manifest is not None else find_manifest(output_root)
     owner, owner_hashes = check_owner_manifest(manifest)
     elf = Elf64Arm(pvr.read_bytes())
     decoded = elf.relocated_slots()
@@ -330,7 +356,7 @@ def run(argv: list[str] | None = None) -> int:
     }
     run_id = 'p3a4e-reloc-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
     stage = build / (run_id + '-private')
-    published = atomic_publish(stage, args.output_root, run_id, report, excerpts)
+    published = atomic_publish(stage, output_root, run_id, report, excerpts)
     print(json.dumps({'status': status, **published,
                       'relocations_parsed': report['relocation_slots_parsed'],
                       'relocations_requested': len(target_slots),

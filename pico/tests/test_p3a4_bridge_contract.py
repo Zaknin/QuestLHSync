@@ -36,7 +36,11 @@ class BridgeContractTests(unittest.TestCase):
         self.assertIn('llvm-objdump.exe', self.src)
 
     def test_evidence_is_private_and_last_marker(self):
-        self.assertIn(r'\\192.168.23.63\Torrents\Codex\PicoLHSync\P3-A', self.src)
+        self.assertIn('param([string] $OutputRoot = $env:P3_A_OUTPUT_ROOT)', self.src)
+        self.assertIn('Set P3_A_OUTPUT_ROOT or pass -OutputRoot; STOP', self.src)
+        self.assertIn('OutputRoot must be outside the repository; STOP', self.src)
+        self.assertIn('[System.IO.FileAttributes]::ReparsePoint', self.src)
+        self.assertNotRegex(self.src, r'(?i)\\{2}(?:\d{1,3}\.){3}\d{1,3}\\')
         self.assertIn('.sha256.part', self.src)
         self.assertIn('Move-Item -LiteralPath $markerPart', self.src)
         self.assertIn('SMB final integrity failed', self.src)
@@ -105,6 +109,75 @@ class BridgeContractTests(unittest.TestCase):
         )
         self.assertEqual(0, run.returncode, run.stdout + '\n' + run.stderr)
 
+    def test_output_root_guard_runs_before_analysis(self):
+        import os
+        import shutil
+        import subprocess
+        import sys
+
+        pwsh = shutil.which('pwsh') or shutil.which('pwsh.exe')
+        if not pwsh:
+            if sys.platform == 'win32':
+                self.fail('PowerShell 7 executable missing on Windows host')
+            self.skipTest('PowerShell 7 not installed on this non-Windows test host')
+        env = os.environ.copy()
+        env.pop('P3_A_OUTPUT_ROOT', None)
+        repo = SCRIPT.resolve().parents[2]
+        cases = (
+            ([], 'Set P3_A_OUTPUT_ROOT or pass -OutputRoot; STOP'),
+            (['-OutputRoot', str(repo)], 'OutputRoot must be outside the repository; STOP'),
+        )
+        for args, expected in cases:
+            with self.subTest(args=args):
+                run = subprocess.run(
+                    [pwsh, '-NoProfile', '-NonInteractive', '-File', str(SCRIPT), *args],
+                    env=env, capture_output=True, text=True, timeout=20,
+                )
+                self.assertNotEqual(0, run.returncode)
+                self.assertIn(expected, run.stdout + '\n' + run.stderr)
+
+    def test_output_root_reparse_ancestor_is_rejected(self):
+        import os
+        import shutil
+        import subprocess
+        import sys
+        import tempfile
+
+        pwsh = shutil.which('pwsh') or shutil.which('pwsh.exe')
+        if not pwsh:
+            if sys.platform == 'win32':
+                self.fail('PowerShell 7 executable missing on Windows host')
+            self.skipTest('PowerShell 7 not installed on this non-Windows test host')
+        with tempfile.TemporaryDirectory(prefix='p3a4-output-root-') as temp_root:
+            alias = pathlib.Path(temp_root) / 'repo-junction'
+            env = os.environ.copy()
+            env['PICO_A4_SCRIPT'] = str(SCRIPT.resolve())
+            env['P3A4_JUNCTION'] = str(alias)
+            env['P3A4_REPO'] = str(SCRIPT.resolve().parents[2])
+            env['P3A4_OUTPUT'] = str(alias / 'private')
+            command = r'''
+$alias = $env:P3A4_JUNCTION
+New-Item -ItemType Junction -Path $alias -Target $env:P3A4_REPO -ErrorAction Stop | Out-Null
+try {
+    try {
+        & $env:PICO_A4_SCRIPT -OutputRoot $env:P3A4_OUTPUT
+        [Console]::Error.WriteLine('Tracer accepted a repository junction')
+        exit 2
+    } catch {
+        if ($_.Exception.Message -match 'reparse point') { exit 0 }
+        [Console]::Error.WriteLine($_.Exception.Message)
+        exit 3
+    }
+} finally {
+    [System.IO.Directory]::Delete($alias, $false)
+}
+'''
+            run = subprocess.run(
+                [pwsh, '-NoProfile', '-NonInteractive', '-Command', command],
+                env=env, capture_output=True, text=True, timeout=20,
+            )
+            self.assertEqual(0, run.returncode, run.stdout + '\n' + run.stderr)
+
     def test_v3_callback_loop_is_complete(self):
         self.assertIn('foreach ($line in $relocs) {', self.src)
         self.assertIn('foreach ($w in $windows) {', self.src)
@@ -124,9 +197,34 @@ class BridgeContractTests(unittest.TestCase):
         self.assertTrue(self.src.rstrip().endswith("| ConvertTo-Json -Compress"))
 
     def test_essential_regions_are_present(self):
-        for address in ('0x664d0', '0x375d0', '0x38670', '0x38bc0',
-                        '0x36860', '0x9494', '0x98e4', '0xa59c'):
+        for address in ('0x664d0', '0x375d0', '0x38330', '0x38bc0',
+                        '0x36860', '0x9494', '0x98e4', '0xa4c4'):
             self.assertIn(address, self.src)
+
+    def test_start_preview_is_captured_by_exact_exported_extent(self):
+        self.assertIn('PvrCameraDevice::startPreview\\(', self.src)
+        self.assertIn("'PvrCameraDevice::startPreview\\('", self.src)
+        self.assertIn("Name='16-pvr-startPreview-full'", self.src)
+
+    def test_full_hidl_conversion_and_producer_request_context_are_captured(self):
+        self.assertIn("Name='06-hidl-buffer-info'; Bin='hidl'; From=0x9494; To=0x9724", self.src)
+        self.assertIn("Name='03-core-CSL-fence-write'; Bin='core'; From=0x38330; To=0x38c50", self.src)
+        self.assertIn("Name='09-core-request-context'; Bin='core'; From=0x397e0; To=0x39b60", self.src)
+        self.assertIn("Name='08-hidl-configuration'; Bin='hidl'; From=0xa4c4; To=0xa69c", self.src)
+
+    def test_csl_handler_and_fence_callback_veneers_are_captured(self):
+        self.assertIn("Name='10-core-CSL-callback-veneers'; Bin='core'; From=0x4c470; To=0x4c488", self.src)
+
+    def test_queue_key_ioctl_helpers_are_captured_by_exact_extent(self):
+        self.assertIn('VideoQueueUtil', self.src)
+        self.assertIn("Name='17-pvr-queue-enqueue-key'; Pattern='VideoQueueUtil::EnQueVbQueueBuffer\\(unsigned short, int, bool\\)'", self.src)
+        self.assertIn("Name='18-pvr-queue-dequeue-key'; Pattern='VideoQueueUtil::DeQueVbQueueBuffer\\(int\\*, bool\\)'", self.src)
+        self.assertIn("Name='02-core-CSL-timestamp-message'; Bin='core'; From=0x375d0; To=0x37730", self.src)
+
+    def test_timestamp_format_string_is_captured_in_private_manifest(self):
+        self.assertIn('llvm-strings.exe', self.src)
+        self.assertIn('core_timestamp_strings', self.src)
+        self.assertIn('CSLTimestampTypeQtimer frameMessage', self.src)
 
 
 if __name__ == '__main__':

@@ -1,9 +1,35 @@
 # P3-A4 private offline bridge trace. Reads locally pinned ELF files; NO ADB.
 [CmdletBinding()]
-param([string] $OutputRoot = '\\192.168.23.63\Torrents\Codex\PicoLHSync\P3-A')
+param([string] $OutputRoot = $env:P3_A_OUTPUT_ROOT)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) { throw 'Set P3_A_OUTPUT_ROOT or pass -OutputRoot; STOP' }
+if (-not [System.IO.Path]::IsPathRooted($OutputRoot)) { throw 'OutputRoot must be an absolute path; STOP' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$repoRoot = [System.IO.Path]::GetFullPath($repo).TrimEnd([char[]]@('\', '/'))
+$outputPath = [System.IO.Path]::GetFullPath($OutputRoot)
+$outputComparable = $outputPath.TrimEnd([char[]]@('\', '/'))
+if ($outputComparable.Equals($repoRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $outputPath.StartsWith(($repoRoot + [System.IO.Path]::DirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'OutputRoot must be outside the repository; STOP'
+}
+$pathRoot = [System.IO.Path]::GetPathRoot($outputPath)
+$cursor = $outputPath
+while (-not [string]::IsNullOrWhiteSpace($cursor)) {
+    if (Test-Path -LiteralPath $cursor) {
+        $entry = Get-Item -LiteralPath $cursor -Force
+        if (($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'OutputRoot cannot traverse a reparse point; STOP'
+        }
+    }
+    $separatorChars = [char[]]@([char]92, [char]47)
+    if ($cursor.TrimEnd($separatorChars).Equals(
+        $pathRoot.TrimEnd($separatorChars), [System.StringComparison]::OrdinalIgnoreCase)) { break }
+    $parent = Split-Path -Parent $cursor
+    if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $cursor) { break }
+    $cursor = $parent
+}
+$OutputRoot = $outputPath
 $build = Join-Path $repo 'pico\build'
 function Find-Pinned([string] $pattern, [string] $hash) {
     $found = @(Get-ChildItem -Path (Join-Path $build $pattern) -File -ErrorAction SilentlyContinue |
@@ -25,13 +51,15 @@ New-Item -ItemType Directory -Path $private -ErrorAction Stop | Out-Null
 $bins = @{ pvr=$pvr; core=$core; hidl=$hidl }
 $windows = @(
     @{ Name='01-pvr-FrameMetaDate-consumer'; Bin='pvr'; From=0x664d0; To=0x66740 },
-    @{ Name='02-core-CSL-timestamp-message'; Bin='core'; From=0x375d0; To=0x376a0 },
-    @{ Name='03-core-CSL-fence-write'; Bin='core'; From=0x38670; To=0x38850 },
+    @{ Name='02-core-CSL-timestamp-message'; Bin='core'; From=0x375d0; To=0x37730 },
+    @{ Name='03-core-CSL-fence-write'; Bin='core'; From=0x38330; To=0x38c50 },
     @{ Name='04-core-CSL-fallback'; Bin='core'; From=0x38bc0; To=0x38c50 },
     @{ Name='05-core-buffer-allocation'; Bin='core'; From=0x36860; To=0x36b70 },
-    @{ Name='06-hidl-buffer-info'; Bin='hidl'; From=0x9494; To=0x96a0 },
+    @{ Name='06-hidl-buffer-info'; Bin='hidl'; From=0x9494; To=0x9724 },
     @{ Name='07-hidl-buffer-ready'; Bin='hidl'; From=0x98e4; To=0x9990 },
-    @{ Name='08-hidl-configuration'; Bin='hidl'; From=0xa59c; To=0xa6a0 }
+    @{ Name='08-hidl-configuration'; Bin='hidl'; From=0xa4c4; To=0xa69c },
+    @{ Name='09-core-request-context'; Bin='core'; From=0x397e0; To=0x39b60 },
+    @{ Name='10-core-CSL-callback-veneers'; Bin='core'; From=0x4c470; To=0x4c488 }
 )
 $metadata = [ordered]@{
     schema='p3a4.offline.bridge.v3'
@@ -48,12 +76,17 @@ $metadata = [ordered]@{
     symbol_hits=@{}
     windows=@()
 }
+$stringTool = Join-Path (Split-Path -Parent $objdump) 'llvm-strings.exe'
+if (-not (Test-Path -LiteralPath $stringTool)) { throw 'llvm-strings.exe missing from same NDK' }
+$timestampStrings = @(& $stringTool '-a' '-t' 'x' $core | Select-String -SimpleMatch 'CSLTimestampTypeQtimer frameMessage')
+if ($LASTEXITCODE -ne 0 -or $timestampStrings.Count -ne 1) { throw 'Pinned CSL timestamp diagnostic string not uniquely resolved' }
+$metadata['core_timestamp_strings'] = @($timestampStrings | ForEach-Object { $_.Line.Trim() })
 foreach ($kind in @('pvr','core','hidl')) {
     $path = $bins[$kind]
     $metadata.input_sha256[$kind] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     $syms = @(& $objdump '--dynamic-syms' '--demangle' $path)
     if ($LASTEXITCODE -ne 0) { throw "Symbol extraction failed for $kind" }
-    $hits = @($syms | Select-String -Pattern 'QuickCameraClient|DeQueueFrame|FrameMetaDate|QuickCameraBufInfo|OnBufferReady|CamQuickAccessDevice|mapMemory|mmap' |
+    $hits = @($syms | Select-String -Pattern 'QuickCameraClient|DeQueueFrame|FrameMetaDate|QuickCameraBufInfo|OnBufferReady|PvrCameraDevice::startPreview|VideoQueueUtil|CamQuickAccessDevice|mapMemory|mmap' |
         Select-Object -First 120 | ForEach-Object { $_.Line })
     $metadata.symbol_hits[$kind] = @($hits)
 }
@@ -68,7 +101,10 @@ $pvrTargets = @(
     @{ Name='12-pvr-ConfigAndAllocBuffers'; Pattern='QuickCameraClient::ConfigAndAllocBuffers\(' },
     @{ Name='13-pvr-PrepareStreamOn'; Pattern='QuickCameraClient::PrepareStreamOn\(' },
     @{ Name='14-pvr-Constructor'; Pattern='QuickCameraClient::QuickCameraClient\(' },
-    @{ Name='15-pvr-OnBufferReady'; Pattern='PvrCameraDeviceCallback::OnBufferReady\(' }
+    @{ Name='15-pvr-OnBufferReady'; Pattern='PvrCameraDeviceCallback::OnBufferReady\(' },
+    @{ Name='16-pvr-startPreview-full'; Pattern='PvrCameraDevice::startPreview\(' },
+    @{ Name='17-pvr-queue-enqueue-key'; Pattern='VideoQueueUtil::EnQueVbQueueBuffer\(unsigned short, int, bool\)' },
+    @{ Name='18-pvr-queue-dequeue-key'; Pattern='VideoQueueUtil::DeQueVbQueueBuffer\(int\*, bool\)' }
 )
 $metadata['pvr_exact_targets'] = @()
 foreach ($target in $pvrTargets) {
@@ -124,7 +160,7 @@ foreach ($target in @($callbackTargets | Sort-Object | Select-Object -First 8)) 
     $n = @($metadata['callback_candidates']).Count
     $metadata['callback_candidates'] += ('0x{0:x}' -f $target)
     $windows += @{
-        Name = ('16-pvr-hidl-callback-candidate-' + $n)
+        Name = ('20-pvr-hidl-callback-candidate-' + $n)
         Bin = 'pvr'
         From = $target
         To = ($target + 0x600)
@@ -145,7 +181,7 @@ $archive = Join-Path $private ($run + '.zip')
 $contents = @(Get-ChildItem -LiteralPath $private -File -Filter '*.txt') + @(Get-Item -LiteralPath $manifest)
 Compress-Archive -LiteralPath @($contents.FullName) -DestinationPath $archive -CompressionLevel Optimal
 # Publish only disassembly excerpts and metadata, never proprietary ELF bytes.
-New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+[System.IO.Directory]::CreateDirectory($OutputRoot) | Out-Null
 $files = @(
     @{ Local=$archive; Name=($run + '.zip') },
     @{ Local=$manifest; Name=($run + '.json') }

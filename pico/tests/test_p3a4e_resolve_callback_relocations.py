@@ -8,7 +8,7 @@ import unittest
 import zipfile
 
 from pico.tools.p3a4e_resolve_callback_relocations import (
-    Elf64Arm, check_owner_manifest, atomic_publish, PIN_PVR,
+    Elf64Arm, check_owner_manifest, atomic_publish, PIN_PVR, resolve_output_root,
 )
 
 
@@ -146,6 +146,35 @@ class TestIntegrity(unittest.TestCase):
             with zipfile.ZipFile(result['zip']) as z:
                 self.assertEqual(sorted(z.namelist()), ['callback-00.txt', 'manifest.json'])
             self.assertEqual(Path(result['marker']).read_text().count('\n'), 2)
+
+
+class TestOutputRoot(unittest.TestCase):
+    def test_requires_absolute_cli_or_environment_path(self):
+        repo = Path(__file__).resolve().parents[2]
+        with self.assertRaisesRegex(ValueError, 'P3_A_OUTPUT_ROOT'):
+            resolve_output_root(None, repo, {})
+        with self.assertRaisesRegex(ValueError, 'absolute'):
+            resolve_output_root(Path('relative-output'), repo, {})
+
+    def test_environment_path_resolves_outside_repository(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as tmp:
+            expected = (Path(tmp) / 'private').resolve()
+            actual = resolve_output_root(None, repo, {'P3_A_OUTPUT_ROOT': str(expected)})
+            self.assertEqual(actual, expected)
+
+    def test_repository_and_symlink_alias_paths_are_rejected(self):
+        repo = Path(__file__).resolve().parents[2]
+        with self.assertRaisesRegex(ValueError, 'outside the repository'):
+            resolve_output_root(repo / 'pico' / 'build' / 'private', repo, {})
+        with tempfile.TemporaryDirectory() as tmp:
+            alias = Path(tmp) / 'repo-link'
+            try:
+                alias.symlink_to(repo, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                self.skipTest('Directory symlinks unavailable on this host')
+            with self.assertRaisesRegex(ValueError, 'outside the repository'):
+                resolve_output_root(alias / 'private', repo, {})
 
 
 if __name__ == '__main__':
