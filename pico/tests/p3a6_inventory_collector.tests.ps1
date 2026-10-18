@@ -283,6 +283,43 @@ $rejectedShell = & $module { Test-P3A6AllowedAdbArguments -Arguments @('-t', '42
 Assert-True ($allowedDevices -and $allowedProperty -and $allowedProcess -and $allowedProbe -and $rawProcessRejected -and $rawProbeRejected -and -not $rejectedShell) 'native command allowlist must accept only exact POSIX-quoted inventory command shapes'
 $passCount++
 
+# ADB resolution is pinned to the SDK under LOCALAPPDATA, regardless of other PATH copies.
+$adbResolutionRoot = New-TestOutputRoot
+$sdkAdbPath = Join-Path $adbResolutionRoot 'Android\Sdk\platform-tools\adb.exe'
+$pathAdbDirectories = @(
+    (Join-Path $adbResolutionRoot 'path-copy-one'),
+    (Join-Path $adbResolutionRoot 'path-copy-two')
+)
+New-Item -ItemType Directory -Path (Split-Path -Parent $sdkAdbPath) -Force | Out-Null
+[IO.File]::WriteAllText($sdkAdbPath, 'synthetic non-executable adb placeholder')
+foreach ($directory in $pathAdbDirectories) {
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $directory 'adb.exe'), 'synthetic PATH-only adb placeholder')
+}
+$originalLocalAppData = $env:LOCALAPPDATA
+$originalPath = $env:PATH
+try {
+    $env:LOCALAPPDATA = $adbResolutionRoot
+    $env:PATH = ($pathAdbDirectories -join [IO.Path]::PathSeparator) + [IO.Path]::PathSeparator + $originalPath
+    $pathAdbCommands = @(Get-Command -Name 'adb' -CommandType Application -ErrorAction SilentlyContinue)
+    Assert-True ($pathAdbCommands.Count -ge 2) 'regression fixture must expose multiple ADB executables through PATH'
+
+    $multiplePathResult = Invoke-P3A6NativeAdb -Arguments @('get-state') -TimeoutMs 1000
+    Assert-True ($multiplePathResult.StartFailed -eq $true -and $multiplePathResult.Rejected -ne $true) 'synthetic placeholder must not execute and unrelated PATH ADB copies must not cause allowlist rejection'
+    $resolvedSdkAdbPath = & $module { Get-P3A6PinnedAdbPath }
+    Assert-True ($resolvedSdkAdbPath -eq [IO.Path]::GetFullPath($sdkAdbPath)) 'native executor resolver must return the exact LOCALAPPDATA SDK adb.exe path'
+
+    $missingSdkRoot = New-TestOutputRoot
+    $env:LOCALAPPDATA = $missingSdkRoot
+    $missingSdkResult = Invoke-P3A6NativeAdb -Arguments @('get-state') -TimeoutMs 1000
+    Assert-True ($missingSdkResult.StartFailed -eq $true -and $missingSdkResult.ExecutableUnavailable -eq $true -and $missingSdkResult.Rejected -ne $true) 'missing pinned SDK adb.exe must fail closed without PATH fallback'
+}
+finally {
+    $env:LOCALAPPDATA = $originalLocalAppData
+    $env:PATH = $originalPath
+}
+$passCount++
+
 # Successful mock data is allowlisted; raw ADB output, serial and personal-looking stderr are not saved.
 $privacyResponder = {
     param([string[]]$Arguments, [int]$TimeoutMs)
@@ -322,4 +359,4 @@ foreach ($root in $script:CreatedOutputRoots) {
     if (Test-Path -LiteralPath $fullRoot) { [IO.Directory]::Delete($fullRoot, $true) }
 }
 
-Write-Output "P3-A6 M1 PowerShell mock collector checks: $passCount/18 PASS"
+Write-Output "P3-A6 M1 PowerShell mock collector checks: $passCount/19 PASS"

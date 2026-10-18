@@ -24,7 +24,7 @@ class TestP3A6ReadOnlyInventoryCollector(unittest.TestCase):
             0,
             msg=f'PowerShell mock collector suite failed.\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}',
         )
-        self.assertIn('P3-A6 M1 PowerShell mock collector checks: 18/18 PASS', completed.stdout)
+        self.assertIn('P3-A6 M1 PowerShell mock collector checks: 19/19 PASS', completed.stdout)
 
         tool = repo / 'pico' / 'tools' / 'collect_p3a6_inventory.ps1'
         dry_run = subprocess.run(

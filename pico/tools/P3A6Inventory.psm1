@@ -220,6 +220,30 @@ fi
     return $template.Replace('__LIMIT__', [string][Math]::Max(1, [Math]::Min(200, $ProcessBudget))).TrimEnd([char[]]@("`r", "`n"))
 }
 
+function Get-P3A6PinnedAdbPath {
+    $localAppData = [Environment]::GetEnvironmentVariable('LOCALAPPDATA', 'Process')
+    if ([string]::IsNullOrWhiteSpace($localAppData) -or -not [IO.Path]::IsPathFullyQualified($localAppData)) {
+        return $null
+    }
+
+    try {
+        $localAppDataPath = [IO.Path]::GetFullPath($localAppData)
+        $adbPath = [IO.Path]::GetFullPath((Join-Path $localAppDataPath 'Android\Sdk\platform-tools\adb.exe'))
+        $platformToolsPath = [IO.Path]::GetFullPath((Join-Path $localAppDataPath 'Android\Sdk\platform-tools'))
+        $expectedPrefix = $platformToolsPath.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if (-not $adbPath.StartsWith($expectedPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            [IO.Path]::GetFileName($adbPath) -cne 'adb.exe' -or
+            -not [IO.File]::Exists($adbPath)) {
+            return $null
+        }
+
+        return $adbPath
+    }
+    catch {
+        return $null
+    }
+}
+
 function Invoke-P3A6NativeAdb {
     param([string[]]$Arguments, [int]$TimeoutMs)
 
@@ -227,13 +251,12 @@ function Invoke-P3A6NativeAdb {
         if (-not (Test-P3A6AllowedAdbArguments -Arguments $Arguments)) {
             return [pscustomobject]@{ ExitCode = -1; Stdout = ''; Stderr = ''; TimedOut = $false; StartFailed = $true; Rejected = $true }
         }
-        $adbCommands = @(Get-Command -Name 'adb' -CommandType Application -ErrorAction Stop)
-        if ($adbCommands.Count -ne 1) {
-            return [pscustomobject]@{ ExitCode = -1; Stdout = ''; Stderr = ''; TimedOut = $false; StartFailed = $true; Rejected = $true }
+        $adbPath = Get-P3A6PinnedAdbPath
+        if ([string]::IsNullOrWhiteSpace($adbPath)) {
+            return [pscustomobject]@{ ExitCode = -1; Stdout = ''; Stderr = ''; TimedOut = $false; StartFailed = $true; Rejected = $false; ExecutableUnavailable = $true }
         }
-        $AdbPath = $adbCommands[0].Source
         $startInfo = [Diagnostics.ProcessStartInfo]::new()
-        $startInfo.FileName = $AdbPath
+        $startInfo.FileName = $adbPath
         $startInfo.WorkingDirectory = $script:P3A6RepoRoot
         $startInfo.UseShellExecute = $false
         $startInfo.CreateNoWindow = $true

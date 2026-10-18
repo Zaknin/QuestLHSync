@@ -13,9 +13,15 @@
 - [`collect_p3a6_inventory.ps1`](../tools/collect_p3a6_inventory.ps1) — CLI для Windows PowerShell 7; без ADB-операций внутри самого сценария dry-run.
 - [`P3A6Inventory.psm1`](../tools/P3A6Inventory.psm1) — collector, native executor, ограниченный allowlist команд и приватная упаковка evidence.
 - [`p3a6_execution_gate_cli.py`](../tools/p3a6_execution_gate_cli.py) — stdin-only bridge, вызывающий существующий [`p3a6_execution_gate.py`](../tools/p3a6_execution_gate.py). Логика и критерии gate не менялись.
-- [`p3a6_inventory_collector.tests.ps1`](../tests/p3a6_inventory_collector.tests.ps1) — 18 PowerShell сценариев с injected mock ADB executor.
+- [`p3a6_inventory_collector.tests.ps1`](../tests/p3a6_inventory_collector.tests.ps1) — 19 PowerShell сценариев с injected mock ADB executor и synthetic executable-path fixtures.
 - [`p3a6_posix_shell_integration.tests.ps1`](../tests/p3a6_posix_shell_integration.tests.ps1) — исполняет сгенерированные process/FD probes в локальном WSL `/bin/sh` на синтетическом proc fixture, проверяя байты вывода и настоящий PowerShell parser.
 - [`test_p3a6_inventory_collector.py`](../tests/test_p3a6_inventory_collector.py) — запускает PowerShell mock harness, POSIX integration harness и отдельно CLI dry-run.
+
+## M1.2 correction — pinned Windows ADB executable
+
+Native executor запускает только точный путь `$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe`. Перед запуском проверяются непустой абсолютный `LOCALAPPDATA`, нормализованный путь с именем `adb.exe` под ожидаемой `platform-tools` directory и существование обычного файла. Поиск через `Get-Command`, перебор ADB из PATH и fallback на другие копии не используются. Если pinned SDK executable отсутствует или путь нельзя проверить, команда завершается fail-closed до `Process.Start`; это не считается отказом command allowlist.
+
+Offline regression fixture помещает два разных фиктивных `adb.exe` в PATH и отдельный placeholder по pinned SDK path. Она проверяет, что resolver возвращает полный pinned путь, allowlisted вызов не отклоняется из-за PATH duplicates, а при отсутствующем SDK executable возвращается `ExecutableUnavailable` без PATH fallback. Placeholders не являются ADB binaries и не обращаются к ADB server или устройству; аппаратная проверка не запускалась.
 
 ## Точный будущий контракт запуска
 
@@ -90,7 +96,7 @@ Native executor принимает только точные inventory command s
 
 ## Права и условия будущего сеанса
 
-- На Windows нужны PowerShell 7, Python с доступным из PATH модулем `pico.tools.p3a6_execution_gate_cli`, одна однозначная копия `adb.exe` в PATH, доступ к `LOCALAPPDATA` и возможность задать private DACL на новую run-папку. Collector не запрашивает elevation; если ACL создать нельзя, он блокирует запуск до ADB.
+- На Windows нужны PowerShell 7, Python с доступным из PATH модулем `pico.tools.p3a6_execution_gate_cli`, `adb.exe` по точному пути `$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe`, доступ к `LOCALAPPDATA` и возможность задать private DACL на новую run-папку. Другие ADB-копии в PATH не учитываются. Collector не запрашивает elevation; если pinned executable отсутствует или ACL создать нельзя, он блокирует запуск до ADB.
 - На Pico владелец должен заранее включить и авторизовать обычный USB debugging/ADB shell, выбрать правильное устройство и разрешить только действие `read-only-inventory`. Root, `su` и обход SELinux не нужны и не запрашиваются. Отказ в `/proc` или fdinfo останавливает сбор и сохраняется как partial evidence.
 - Первый вызов `adb.exe` может запустить стандартный host-side ADB server, если его ещё нет. Collector не устанавливает и не меняет Pico-службы; выполнение shell-команд начинается только после approval gate и проверки модели. Если запуск host ADB server сам по себе запрещён политикой владельца, ADB должен быть заранее поднят отдельно и этот режим отдельно одобрен.
 - Устройство должно вернуть `Pico 4 Pro` через `ro.product.model`; это проверка выбора, не криптографическая идентификация/attestation. При неоднозначном `adb get-state` collection завершается до shell-команд; collector не перечисляет serial для выбора устройства.
@@ -133,9 +139,12 @@ Private archive не предназначен для публикации в Git
 - timeout/partial output, ADB error, duration/record limits;
 - `/proc`/fdinfo permission denial с прекращением последующих device commands, исчезнувший PID, ошибка `ps` и allowlisted fdinfo;
 - нулевой executor call для dry-run, запрет `adb root` и обязательное POSIX quoting native allowlist;
+- две фиктивные ADB-копии в PATH при pinned SDK path, выбор точного полного пути и fail-closed при отсутствующем SDK executable;
 - отсутствие serial/personal-looking данных в archive, неизменные false gates, ACL, ZIP SHA-256/final marker.
 - реальный WSL `/bin/sh` запуск сгенерированных FD/process probes, проверка raw tab bytes, parser roundtrip, Android 10 argv join, `ps` success/error/header framing и отсутствия fallback.
 
 Все проверки offline; integration использует только синтетический proc fixture и локальный WSL shell. `adb.exe`, ADB server, Pico и её camera/PVR pipeline не запускались. Результаты не создают experimental PASS и не повышают R1–R9.
 
 Результат проверки M1.1 (2026-10-18): `python -m unittest discover -s pico/tests -v` — **198/198 PASS**; targeted `python -m unittest pico.tests.test_p3a6_inventory_collector -v` — **2/2 PASS**; PowerShell mock harness — **18/18 PASS**; POSIX integration harness — **PASS**; `git diff --check` — **PASS**. Эти тесты проверяют только локальное поведение и синтетические fixtures.
+
+Результат проверки M1.2 (2026-10-18): `python -m unittest discover -s pico/tests -v` — **198/198 PASS**; targeted `python -m unittest pico.tests.test_p3a6_inventory_collector -v` — **2/2 PASS**; PowerShell mock harness — **19/19 PASS**; прямой WSL POSIX integration harness — **PASS**; `git diff --check` — **PASS**. PATH fixtures содержат только текстовые placeholders; запуск завершается до исполнения fixture. ADB client/executable, ADB server, Pico и camera/PVR pipeline не запускались.
