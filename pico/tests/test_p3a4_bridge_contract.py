@@ -62,15 +62,15 @@ class BridgeContractTests(unittest.TestCase):
         self.assertIn('PVR exact symbol resolution failed', self.src)
         self.assertIn('PVR symbol size/address unsafe', self.src)
         self.assertIn('pvr_exact_targets', self.src)
-        self.assertIn('p3a4.offline.bridge.v3', self.src)
+        self.assertIn('p3a4.offline.bridge.v4', self.src)
         self.assertNotIn("Name=('09-pvr-symbol-' + $n)", self.src)
 
     def test_symbol_capture_is_in_exact_function_bounds(self):
         self.assertIn('From=$start; To=($start+$size)', self.src)
         self.assertIn("($w.To-$w.From) -gt 0x1200", self.src)
 
-    def test_v3_hidl_callback_relocation_probe(self):
-        self.assertIn("schema='p3a4.offline.bridge.v3'", self.src)
+    def test_v4_hidl_callback_relocation_probe(self):
+        self.assertIn("schema='p3a4.offline.bridge.v4'", self.src)
         self.assertIn('llvm-readelf.exe', self.src)
         self.assertIn("0x752b0", self.src)
         self.assertIn("0x75330", self.src)

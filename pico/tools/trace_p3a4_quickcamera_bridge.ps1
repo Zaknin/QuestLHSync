@@ -62,7 +62,7 @@ $windows = @(
     @{ Name='10-core-CSL-callback-veneers'; Bin='core'; From=0x4c470; To=0x4c488 }
 )
 $metadata = [ordered]@{
-    schema='p3a4.offline.bridge.v3'
+    schema='p3a4.offline.bridge.v4'
     status='TRACE_CAPTURED_NOT_PROVEN'
     observe_only=$true
     exact_time=$false
@@ -104,7 +104,8 @@ $pvrTargets = @(
     @{ Name='15-pvr-OnBufferReady'; Pattern='PvrCameraDeviceCallback::OnBufferReady\(' },
     @{ Name='16-pvr-startPreview-full'; Pattern='PvrCameraDevice::startPreview\(' },
     @{ Name='17-pvr-queue-enqueue-key'; Pattern='VideoQueueUtil::EnQueVbQueueBuffer\(unsigned short, int, bool\)' },
-    @{ Name='18-pvr-queue-dequeue-key'; Pattern='VideoQueueUtil::DeQueVbQueueBuffer\(int\*, bool\)' }
+    @{ Name='18-pvr-queue-dequeue-key'; Pattern='VideoQueueUtil::DeQueVbQueueBuffer\(int\*, bool\)' },
+    @{ Name='19-pvr-CSLHwInternalDefaultIoctl2-envelope'; Pattern='VideoQueueUtil::CSLHwInternalDefaultIoctl2\(unsigned int, void\*, unsigned int\)' }
 )
 $metadata['pvr_exact_targets'] = @()
 foreach ($target in $pvrTargets) {

@@ -115,12 +115,12 @@ RELR parser декодировал 12/12 целевых relocation entries; `0x7
 - Count `u32` читается из `client+0x68` (`0x6a908`), IDs pointer — из `client+0x60` (`0x6a910`).
 - В цикле `i` загружается `ids[i]` как `w24` (`0x6a92c`) и передаётся в `VideoQueueUtil::EnQueVbQueueBuffer(fd, i, id, true)` (`0x6a930..0x6a940`).
 - В PVR lookup tree создаётся ключ `id` (`0x6a9b4`, node `+0x20`) и mapped pointer на `client->buf_info[i]` (`0x6a9c4`, node `+0x28`). Таким образом, queue key связан с тем record, который построен из handle ordinal `i`.
-- `VideoQueueUtil::EnQueVbQueueBuffer(unsigned short, int, bool)` занимает точный symbol extent `0x6b9a4..0x6baa0`. Он сохраняет index из `w1`, ID из `w2` и кладёт sign-extended ID в request `m.userptr` поле `+0x40` (`0x6b9c0..0x6ba04`), затем вызывает ioctl `0xc058560f` с длиной `0x60` (`0x6ba10`).
+- `VideoQueueUtil::EnQueVbQueueBuffer(unsigned short, int, bool)` занимает точный symbol extent `0x6b9a4..0x6baa0`. Он сохраняет index из `w1`, ID из `w2` и кладёт sign-extended ID в request `m.userptr` поле `+0x40` (`0x6b9c0..0x6ba04`), затем вызывает `CSLHwInternalDefaultIoctl2` с внутренним кодом `0xc058560f`, payload pointer и длиной `0x60` (`0x6ba10`). Это не прямой userspace-вызов `ioctl(fd, 0xc058560f, v4l2_buffer)`.
 
 `QuickCameraClient::DeQueueFrame(void**, FrameMetaDate*)` начинается `0x6b6e8`:
 
 - `0x6b720` получает dequeue index/key через `DeQueVbQueueBuffer`.
-- Вызванный `VideoQueueUtil::DeQueVbQueueBuffer(int*, bool)` имеет extent `0x6b378..0x6b4a4`; он отправляет ioctl `0xc0585611` длиной `0x60` (`0x6b418`) и при успехе копирует request/result `m.userptr` из `+0x40` в caller `int*` (`0x6b458..0x6b45c`). `DeQueueFrame` затем использует этот output как tree key.
+- Вызванный `VideoQueueUtil::DeQueVbQueueBuffer(int*, bool)` имеет extent `0x6b378..0x6b4a4`; он передаёт внутренний код `0xc0585611` и длину `0x60` в `CSLHwInternalDefaultIoctl2` (`0x6b418`) и при успехе копирует значение payload `m.userptr` из `+0x40` в caller `int*` (`0x6b458..0x6b45c`). `DeQueueFrame` затем использует этот output как tree key.
 - `0x6b72c..0x6b7ec` находит record по ключу в `client+0x108`.
 - `0x6b7f0` загружает `buf_info+0x20` mapped base; `0x6b7f4` загружает `buf_info+0x28` offset; `0x6b7f8` вычисляет `base+offset`.
 - `0x6b7fc..0x6b820` копирует metadata `+0x08` (64-bit request ID), `+0x00` (64-bit timestamp candidate), `+0x10`, `+0x14`, `+0x18` (три 32-bit поля) в `FrameMetaDate` по тем же offsets. Metadata record содержит минимум `0x1c` bytes.
@@ -132,5 +132,11 @@ RELR parser декодировал 12/12 целевых relocation entries; `0x7
 Статически установлены: FD значение, записанное в native handle; HIDL и PVR handle clones; FD и mmap аргументы; per-index order; отдельно передаваемый metadata offset; PVR-side QBUF request field, DQBUF output field, tree lookup и pointer arithmetic/byte copies в `FrameMetaDate`.
 
 Не установлены: реализация/контракт импортированного `CSLAlloc`; физическая идентичность его CPU pointer и exported FD backing pages; kernel сохранение queue `m.userptr` между QBUF и DQBUF и runtime успешность queue/dequeue; timestamp unit/domain; реальная частота fallback; физический event и пригодность для pose/Lighthouse.
+
+### Уточнение P3-A5 о wrapper и cache-op
+
+`CSLHwInternalDefaultIoctl2` — динамический символ PVR ELF с extent `0x6c2f8..0x6c3d8`. Он упаковывает внутренний operation code, длину и payload pointer в 24-byte envelope, загружает fd из `this+0x84` и вызывает libc `ioctl(fd, 0xc01856c0, &envelope)`. Операции `0xc058560f/0xc0585611` остаются вложенными значениями. Payload не копируется и не переписывается userspace wrapper-ом; последующая dispatch/copy-back семантика закрытого kernel handler не установлена. Вложенный код содержит размер `0x58`, тогда как PVR передаёт helper-у размер `0x60`; последствия этого расхождения также зависят от отсутствующего kernel handler.
+
+Producer ELF отдельно импортирует `CSLBufferCacheOp`; в `CamQuickAccessDevice::StreamOn` есть call site `0x383f0` с аргументами `w0=handle`, `w1=1`, `w2=0`. Это подтверждает запрос cache-op по конкретному handle в этом code path, но не внутреннюю реализацию, завершение операции, область действия или общее свойство cache coherence для всех producer/PVR accesses. См. [P3-A5 audit](P3-A5-Allocator-and-Queue-Contract-Audit.md).
 
 Текущие закрытые gates: `observe_only=true`, `exact_time=false`, `live_lighthouse_correction_allowed=false`, `mapping_verified=false`, `pose_verified=false`, `frame_meta_bridge_verified=false`, `physical_event_verified=false`, `shared_buffer_identity_verified=false`.

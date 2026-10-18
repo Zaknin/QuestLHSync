@@ -1,10 +1,14 @@
-# P3-A4 — QuickCamera timestamp provenance handover
+# P3-A5 — QuickCamera timestamp provenance handover
 
-Состояние на 2026-10-18. Работа выполнена в `C:\Dev\PicoLHSync`, branch `feature/pico-support`; исходная база была чистой на `def417f588e296e03268c84082248132397d55a3`.
+Состояние на 2026-10-18. Работа выполнена в `C:\Dev\PicoLHSync`, branch `feature/pico-support`, начиная с чистого `e3f04c53b5fa0a71704d40303011b30042af209e`.
 
 ## Вердикт
 
-Статически доказаны ABI и порядок передачи `CSL producer → native handle/ID arrays → HIDL handles/IDs → PVR mmap/buf_info`, а также PVR userspace-путь от ID к `QBUF userptr`, затем из `DQBUF` к lookup key и metadata pointer в `FrameMetaDate`. Участок kernel roundtrip `QBUF userptr → DQBUF userptr` остаётся **PARTIAL**: поведение драйвера/ядра не исследовано, поэтому равенство возвращённого ключа переданному ID не доказано. Внутренний contract импортированного Qualcomm `CSLAlloc` отсутствует, поэтому тождество backing pages producer CPU pointer и PVR mapped FD тоже не доказано. Называть весь shared-memory bridge проверенным нельзя.
+P3-A5 уточнила два внешних contract gaps. Локальный ELF provider/source, соответствующий PICO `CSLAlloc`, не найден; публичный CamX source mirror показывает только аналогичную реализацию и не привязан к PICO build. Поэтому producer CPU pointer ↔ exported FD backing identity остаётся **UNKNOWN/BLOCKED**.
+
+Для очереди найден `VideoQueueUtil::CSLHwInternalDefaultIoctl2` (`0x6c2f8..0x6c3d8`): он заворачивает внутренние `0xc058560f/0xc0585611` и payload pointer во внешний `ioctl(fd,0xc01856c0,&envelope)`. Userspace не переписывает поле `m.userptr`, но kernel dispatcher/copy-back handler недоступен. Успешный DQBUF использует полученное поле как tree key, однако равенство исходному ID не доказано. Node, открытый конкретным `VideoQueueUtil`, также **UNKNOWN**.
+
+В matching producer ELF подтверждён вызов `CSLBufferCacheOp(handle,1,0)` на пути `StreamOn`; cache-op kernel effect и общая coherency guarantee не установлены. Shared-memory bridge целиком проверенным не считать.
 
 Timestamp dataflow до frame item прослежен. QTIMER label и fallback branch подтверждены в коде, но физический смысл времени и runtime частота fallback неизвестны. Clock domains, pose и Lighthouse mapping не проверялись.
 
@@ -23,10 +27,11 @@ shared_buffer_identity_verified=false
 
 ## Чтение по порядку
 
-1. [P3-A4-Proof-Matrix.md](P3-A4-Proof-Matrix.md) — что подтверждено, опровергнуто и неизвестно.
-2. [P3-A4-Full-Buffer-Provenance.md](P3-A4-Full-Buffer-Provenance.md) — ABI, инструкция-за-инструкцией buffer/ID/offset path.
-3. [P3-A4-Timestamp-Semantics.md](P3-A4-Timestamp-Semantics.md) — ring, request IDs, fence wait, fallback и clock limitations.
-4. [P3-A4-Worklog-20261018.md](P3-A4-Worklog-20261018.md) — ход работ, проверка артефактов и тесты.
+1. [P3-A5-Allocator-and-Queue-Contract-Audit.md](P3-A5-Allocator-and-Queue-Contract-Audit.md) — финальный offline статус allocator, ioctl2 boundary, node и cache contract.
+2. [P3-A4-Proof-Matrix.md](P3-A4-Proof-Matrix.md) — сводная таблица доказательств с уточнёнными статусами.
+3. [P3-A4-Full-Buffer-Provenance.md](P3-A4-Full-Buffer-Provenance.md) — ABI и userspace buffer/ID/offset path с пояснением wrapper.
+4. [P3-A4-Timestamp-Semantics.md](P3-A4-Timestamp-Semantics.md) — ring, request IDs, fence wait, fallback и clock limitations.
+5. [P3-A4-Worklog-20261018.md](P3-A4-Worklog-20261018.md) — исторический ход работ и первоначальный тестовый результат A4.
 
 Эти документы уточняют исторические статусы в `P3-A4-HIDL-PVR-Bridge-20261017.md` и `P3-A4E-PVR-Callback-Relocations-20261018.md`; прежние отчёты сохраняются как evidence, полученное на соответствующем этапе.
 
@@ -63,17 +68,19 @@ shared_buffer_identity_verified=false
 
 - `pico/tools/trace_p3a4_quickcamera_bridge.ps1` — расширены безопасные pinned disassembly windows; бинарники только читаются. Приватный output root задаётся через `P3_A_OUTPUT_ROOT` или `-OutputRoot`, запись внутрь Git repository и через reparse point блокируется.
 - `pico/tests/test_p3a4_bridge_contract.py` — проверяет windows, fail-closed gates, PowerShell parsing и output-root guard.
+- P3-A5 добавил `CSLHwInternalDefaultIoctl2` exact-symbol window и schema v4 в private trace; `pico/tests/test_p3a5_ioctl2_trace.py` запускает tracer с временным output root и проверяет symbol extent. Тест удаляет созданный им private build folder.
+- `pico/research/P3-A5-Allocator-and-Queue-Contract-Audit.md` — найденный публичный analogue, exact ioctl envelope, unresolved kernel/node/backing-store вопросы и следующие точные входы.
+- `pico/research/P3-A4-Proof-Matrix.md` и `P3-A4-Full-Buffer-Provenance.md` — исправлены формулировки kernel boundary и добавлен cache-op callsite.
 - `pico/tools/p3a4e_resolve_callback_relocations.py` — требует явный приватный output root и блокирует пути внутрь репозитория.
 - `pico/tools/p3a4_provenance_model.py` и `pico/tests/test_p3a4_provenance_model.py` — pure-Python ABI/dataflow contract model, без ELF/runtime доступа.
 - Четыре отчёта выше, execution plan и worklog.
 
-Полная команда `python -m unittest discover -s pico/tests`: **176 tests, OK**. Тесты выполнялись офлайн; subprocess проверяют PowerShell parser и fail-closed output-root guards, включая временный junction; ADB/device вызовов не было.
+Полная команда `python -m unittest discover -s pico/tests -v`: A4 — 176 tests, OK; P3-A5 — **177 tests, OK**. Новый regression запускает только локальный ELF extractor с temp output root и очищает созданный им private build folder. `git diff --check` завершился с code 0; были только Git LF→CRLF warnings. ADB/device вызовов нет.
 
 ## Что делать дальше
 
-1. Поискать доступный Qualcomm CSLAlloc API/source contract, который определяет отношение CPU pointer и exported handle FD. Без него не закрывать backing-store identity gate.
-2. При необходимости дополнить статическое описание внутренних `buf_info+0x00..+0x17` полей; они не блокируют текущий pointer/offset вывод.
-3. Физическая Pico-проверка timestamp semantics/fallback/clock relationship требует отдельного пользовательского разрешения и отдельного безопасного протокола из Timestamp Semantics. В этом исследовании ничего на Pico не запускалось.
-4. Pose, camera-to-factory coordinates, Lighthouse synchronization и активная коррекция остаются отдельными будущими задачами с закрытыми gates.
+1. Offline search по локальным материалам останавливается здесь: требуемый CSL provider/kernel handler не найден. Продолжать только если появится source drop/ELF с build ID и доказанной привязкой к указанному PICO fingerprint.
+2. Если exact sources отсутствуют, queue-ID return, действительный node, producer/PVR backing identity и cache behavior потребуют отдельной аппаратной проверки с отдельным протоколом. В этой задаче устройство не использовалось.
+3. Timestamp физическое событие, clock domains, pose, camera-to-factory coordinates, Lighthouse synchronization и активная коррекция остаются отдельными будущими задачами с закрытыми gates.
 
 Следующий инженер должен начать с матрицы доказательств, сверить SHA локальных приватных ELF перед новым анализом и не переиспользовать ни одно из этих значений как runtime acceptance.
