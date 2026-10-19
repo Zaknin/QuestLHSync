@@ -1,6 +1,6 @@
 # P3-A6 — Acceptance Matrix
 
-Обновлено: 2026-10-19, M2.8A. Offline preparation отделена от runtime acceptance. Pico 4 Pro на international Pico OS — установленный факт владельца; Android property tuple описывает только программную идентичность. M1.5 остаётся PARTIAL_PERMISSION_DENIED; owner-reported M2.2 inventory остаётся PARTIAL_LIMITATIONS. M2.7B подтвердил установленный camx_core.so, но runtime load/event/correlation не наблюдались.
+Обновлено: 2026-10-19, M2.8B. Offline preparation отделена от runtime acceptance. Pico 4 Pro на international Pico OS — установленный факт владельца; Android property tuple описывает только программную идентичность. M1.5 остаётся PARTIAL_PERMISSION_DENIED; owner-reported M2.2 inventory остаётся PARTIAL_LIMITATIONS. M2.7B подтвердил установленный camx_core.so. Одна M2.8B read-only попытка совпала по build fingerprint/ABI, но была BLOCKED на `/proc/<pid>/maps` с `PROC_ACCESS_DENIED`; runtime mapping остаётся UNKNOWN.
 
 ## Offline preparation M0/M1
 
@@ -36,7 +36,7 @@
 | M2-HW-01 | Owner-reported M2.2 Pico node metadata inventory | `PARTIAL_LIMITATIONS` | Six sysfs and six `/dev` character nodes; CRLF on both probes; 12 observations/10 ADB commands. Two sysfs names unavailable. The observed labels/dev tuples and `/dev` mode/uid/gid are preserved in the M2.3 audit. Original `videoN` IDs were discarded and remain unknown; no inference from order/minor is made. This result is not upgraded by new synthetic tests |
 
 
-### M2.8A runtime provenance evidence layers
+### M2.8A runtime provenance preparation layers (historical baseline)
 
 | ID | Claim | Current status | Evidence and boundary |
 |---|---|---|---|
@@ -49,6 +49,15 @@
 | M2.8A-07 | 38-slot fallback occurrence | STATIC BRANCH VERIFIED / RUNTIME UNKNOWN | Previous-slot fallback is present in QuickCamera static code; no event record establishes that it ran |
 | M2.8A-08 | FrameMetaDate runtime values | STATIC COPY PATH VERIFIED / RUNTIME UNKNOWN | Existing static PVR copy does not expose values through an approved read-only channel |
 | M2.8A-09 | Runtime Android linker namespace resolution | UNKNOWN / NOT OBSERVED | ELF SONAME/DT_NEEDED and installed vendor paths establish declared linkage only. Exact PICO linker configuration and selected namespace are not in evidence; even a maps PASS does not identify namespace selection |
+
+### M2.8B runtime mapping verification
+
+| ID | Claim | Current status | Evidence and boundary |
+|---|---|---|---|
+| M2.8B-01 | Bounded mapping collector, parser, output privacy and safety behavior | `OFFLINE PASS` | Python suite 249/249; M1 PowerShell 29/29; M2 PowerShell 410 assertions; M1, M2.7B and M2.8B WSL POSIX integrations PASS; dry-run `DRY_RUN_ONLY`; `git diff --check` PASS. These are synthetic/local checks, not device proof |
+| M2.8B-02 | Runtime `camx_core.so` mapping in an already-running QuickCamera process | `BLOCKED — PROC_ACCESS_DENIED; claim remains UNKNOWN` | One bounded hardware run verified exact fingerprint and `arm64-v8a`; 5 ADB commands/3 normalized observations. The first matched process candidate was `pvrtrackingservice`; its `/proc/<pid>/maps` read was denied and the collector stopped. No mapping rows or QuickCamera-process mapping result exist |
+| M2.8B-03 | Installed file metadata compared with a runtime mapping | `PARTIAL INPUTS ONLY` | Same probe obtained device/inode stat metadata for `/vendor/lib64/camx_core.so` and `/vendor/lib64/quickcamera.core.so`, but no process map device/inode was readable. Therefore no mapping identity match is available |
+| M2.8B-04 | M2.8B evidence integrity | `PASS — PRIVATE CANONICAL READ-BACK` | One BLOCKED package; archive SHA-256 and sidecar matched, embedded manifest matched external manifest, and `.sha256` was last. Private process/file identifiers remain in canonical evidence, not this matrix |
 
 ## Будущие runtime acceptance
 
@@ -66,7 +75,7 @@
 | R8 | Frame delivery latency | Delivery timestamp берётся у Android consumer/PVR delivery boundary в явно указанном clock domain; relation к raw QTIMER рассчитывается с uncertainty/residuals и ограничен observed pipeline | ADB/host arrival, logcat rendering time или dequeue timestamp — не физический exposure age и не обязательно callback boundary. Сейчас `NOT RUN` |
 | R9 | QTIMER event = physical SOF / exposure start | Matching PICO source/docs однозначно задают event semantics и подтверждены применимость к build, либо отдельное optically referenced hardware measurement синхронизировано с тем же clock | System latency, CSL label, PVR callback, Camera2 timestamp другого stream и synthetic tests недостаточны. Сейчас `NOT PROVEN`; требуется сначала точный source contract, затем отдельная аппаратная задача |
 | R10 | V4L_EVENT_CAM_REQ_MGR_SOF / _SOF_BOOT_TS payload and relation to Pico CSL/PVR metadata | Matching kernel headers/source for the exact Pico build define IDs, payload layout, identifier meanings, clock contract, and event-to-CSL correlation | M2.7B has since acquired the installed Pico provider and verified its static CRM-to-CSL bridge. The exact kernel source/build mapping and all runtime event/correlation evidence remain UNKNOWN/BLOCKED; event-name or ABI similarity does not establish shared clock or frame identity |
-| R11 | Runtime-loaded camx_core.so path | PASS only if a positively identified QuickCamera PID has the exact expected provider path in maps and mapping device/inode matches a simultaneous stat; record PID, path, range, offset, permissions, device, inode and time. PARTIAL if path is visible but file/process identity is incomplete. | Permission denial, process exit, malformed/limited output, or no mapping is BLOCKED/NOT_OBSERVED and does not prove absence. No raw maps are retained |
+| R11 | Runtime-loaded camx_core.so path | PASS only if a positively identified QuickCamera PID has the exact expected provider path in maps and mapping device/inode matches a simultaneous stat; record PID, path, range, offset, permissions, device, inode and time. PARTIAL if path is visible but file/process identity is incomplete. | M2.8B attempt is BLOCKED at the first candidate by `PROC_ACCESS_DENIED`; this is not evidence of absence or of access for remaining PIDs. No raw maps are retained |
 | R12 | Runtime callback occurrence / event ID 0 or 2 | PASS only with an existing default-level PID-attributed record emitted at the callback and explicit event ID/marker fields. PARTIAL if a callback/timestamp record lacks the event ID or request identity. | No new camera, logging-level change, tracing or hook. No record/permission denial is BLOCKED; log delivery timestamp is not payload clock |
 | R13 | CRM/CSL/pipeline/PVR request and frame correlation | PASS only when a permitted observation explicitly joins each identifier through a documented mapping for the same event; do not infer equality from matching numbers. | Missing any link is PARTIAL/BLOCKED. FrameMetaDate memory is not read by this acceptance row |
 | R14 | Clock domain of provider timestamp | PASS only with exact-build timestamp contract and explicit timestamp type/notify evidence; separately record Android delivery clock and its uncertainty. | Logcat prefix, host receive time, QTIMER label, or synthetic relation alone is PARTIAL, not clock identification. Current status UNKNOWN |
