@@ -1,5 +1,11 @@
 # P3-A6-M2 — Read-Only Camera Node Inventory Handover
 
+## Current callback/timestamp status — M2.8C
+
+M2.8C found a callback-specific INFO diagnostic in the pinned `quickcamera.core.so`, but the one permitted default-level logcat snapshot was rejected by the host framing guard (`OUTPUT_FRAMING`, 3,540 bytes, zero accepted rows). The exact framing subcondition and filter support were not retained; this is **not** evidence that the log or callback was absent. Raw output was not saved, and no second snapshot was run. The corrected private diagnostic package is recorded in [P3-A6-M2.8C-Callback-and-Timestamp-Provenance.md](P3-A6-M2.8C-Callback-and-Timestamp-Provenance.md).
+
+The static format includes a Qtimer label, request ID, frame count, timestamp and `monoTimestamp`; it has no CRM event ID or `bNotify`. The straight-line `monoTimestamp` argument reloads the same request-ID ring slot written from the message timestamp. Units, epoch, exact kernel event identity, runtime event occurrence, frame-ID namespaces, fallback occurrence, physical SOF/exposure and Lighthouse suitability remain unproven. No `/proc` method was retried. Next work is offline-only parser/quoting hardening and regression coverage; do not repeat device log collection in M2.8C.
+
 ## Current SOF provenance status — M2.8B
 
 M2.7B verified the installed /vendor/lib64/camx_core.so path, SHA-256 and Build ID for the owner-bound firmware. Static ELF inspection now confirms that quickcamera.core.so declares DT_NEEDED camx_core.so and imports the matching unversioned CSLRegisterMessageHandler export. The acquired provider statically subscribes/dequeues CRM events, builds CSLMessage fields and dispatches the registered callback; QuickCamera statically registers and reads compatible fields.

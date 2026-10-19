@@ -59,6 +59,21 @@
 | M2.8B-03 | Installed file metadata compared with a runtime mapping | `PARTIAL INPUTS ONLY` | Same probe obtained device/inode stat metadata for `/vendor/lib64/camx_core.so` and `/vendor/lib64/quickcamera.core.so`, but no process map device/inode was readable. Therefore no mapping identity match is available |
 | M2.8B-04 | M2.8B evidence integrity | `PASS — PRIVATE CANONICAL READ-BACK` | One BLOCKED package; archive SHA-256 and sidecar matched, embedded manifest matched external manifest, and `.sha256` was last. Private process/file identifiers remain in canonical evidence, not this matrix |
 
+### M2.8C callback and timestamp provenance
+
+| ID | Claim | Current status | Evidence and boundary |
+|---|---|---|---|
+| M2.8C-01 | SHA-pinned callback-specific diagnostic feasibility | `BINARY_STATIC_VERIFIED` | `quickcamera.core.so` has an INFO-format logger call at `0x37724` in the registered callback path; message fields are request ID, frame count, timestamp and a second ring value labelled `monoTimestamp`. Dynamic log gates apply; string presence is not runtime emission |
+| M2.8C-02 | One existing-default-log snapshot | `BLOCKED — OUTPUT_FRAMING` | Exact software identity/ABI matched. One bounded `main`-buffer `logcat -d -v threadtime -t 256` query returned 3,540 bytes; host accepted zero normalized rows. No repeat was made |
+| M2.8C-03 | Runtime process existence | `NOT EVALUABLE` | Process rows were not accepted by the host protocol parser |
+| M2.8C-04 | Runtime callback occurrence | `NOT EVALUABLE / UNKNOWN` | The exact callback diagnostic is useful in principle, but no record passed framing validation. This is not `NOT_OBSERVED` and not PASS |
+| M2.8C-05 | CRM event ID 0/2 and `timestampType`/`bNotify` | `UNKNOWN` | The static log string has a Qtimer label but no CRM event ID or `bNotify`; runtime values were not obtained |
+| M2.8C-06 | Request/frame correlation | `STATIC FIELDS ONLY; RUNTIME UNKNOWN` | The diagnostic format names request ID and frame count; it does not join CRM/CSL/pipeline/PVR IDs or `FrameMetaDate` |
+| M2.8C-07 | Timestamp units and clock domain | `UNKNOWN` | Qtimer is a source label, not units, epoch, exact kernel clock contract, or physical SOF proof. The format's `monoTimestamp` reloads the same request-indexed ring slot on the direct path |
+| M2.8C-08 | 38-slot fallback occurrence | `STATIC CAPABILITY / RUNTIME UNKNOWN` | No dedicated fallback log marker was found; no accepted event record exists |
+| M2.8C-09 | M2.8C private evidence publication | `PASS — CORRECTED CANONICAL READ-BACK` | Corrected package has manifest-only ZIP, byte-identical embedded/external manifest, sidecar entries matching independent ZIP/manifest hashes, and sidecar-last. First committed diagnostic package is preserved and marked as a publisher receipt/manifest-shape error |
+| M2.8C-10 | Offline regression after documentation and probe fixtures | `PASS` | Python 249/249; M1 PowerShell 29/29; M2 PowerShell 410 assertions; M1, M2.7B and M2.8B WSL integrations PASS; one-off M2.8C WSL `/bin/sh` synthetic output checks PASS. No result implies hardware PASS |
+
 ## Будущие runtime acceptance
 
 Любой runtime результат применим только к точному build fingerprint, process и ограниченной approved session. Чтобы принять строку, приватная evidence schema должна содержать method, time range, raw observations, source/build IDs, limits и hashes. Тесты на synthetic fixture не засчитываются как device evidence.
