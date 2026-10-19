@@ -659,7 +659,7 @@ function Invoke-P3A6Inventory {
         schema = 'p3a6.private_inventory_evidence.v1'
         record_kind = 'p3a6_read_only_inventory'
         collector = [ordered]@{
-            version = 'P3-A6-M1.4-v1'
+            version = 'P3-A6-M1.5-v1'
             powershell_version = $PSVersionTable.PSVersion.ToString()
             source_sha256 = [ordered]@{
                 entry = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'collect_p3a6_inventory.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -869,7 +869,8 @@ function Invoke-P3A6Inventory {
                             if ([string]::IsNullOrWhiteSpace($line)) { continue }
                             if ($line -ceq "P3A6`tPROCESS_STATUS`tOBSERVED") { continue }
                             if ($line -ceq "P3A6`tPROCESS_STATUS`tUNAVAILABLE") { $parseFailed = $true; continue }
-                            if ($line -notmatch '^\s*(\d{1,10})\s+([A-Za-z0-9_.@-]{1,256})\s*$') { $parseFailed = $true; break }
+                            # Android process names may contain ':', while path separators, whitespace and shell metacharacters remain excluded.
+                            if ($line -notmatch '^\s*(\d{1,10})\s+([A-Za-z0-9_.:@-]{1,256})\s*$') { $parseFailed = $true; break }
                             $pidValue = [int64]$Matches[1]
                             $nameValue = $Matches[2]
                             if ($nameValue -match '(?i)quickcamera|pvr') { $processes.Add([pscustomobject]@{ pid = $pidValue; name = $nameValue }) }

@@ -1,6 +1,6 @@
 # P3-A6 — Acceptance Matrix
 
-Обновлено: 2026-10-19. M0/M1 preparation отделена от будущих runtime acceptance. Для M1.4 владелец предоставил Android property tuple как target software identity observation; этот turn не выполнял ADB/device action. Hardware acceptance rows остаются `NOT RUN`, `UNKNOWN` или `BLOCKED`.
+Обновлено: 2026-10-19. M0/M1 preparation отделена от будущих runtime acceptance. Владелец предоставил Android property tuple и process-name наблюдение как target observations; этот turn не выполнял ADB/device action. Hardware acceptance rows остаются `NOT RUN`, `UNKNOWN` или `BLOCKED`.
 
 ## Offline preparation M0/M1
 
@@ -12,7 +12,7 @@
 | M0-04 | Clock affine fit, bracket width, calibrated ppm, wrap/reset rejection | `SYNTHETIC PASS` | Синтетический +100 ppm; без scale drift заблокирован. Никакого Pico clock result нет |
 | M0-05 | Hardware execution gate defaults closed, exact scope + time/count bounds | `SYNTHETIC PASS` | Tests validate gate contract; настоящего approval record/direct confirmation нет |
 | M0-06 | Device node, runtime queue contract, mapping identity, timestamp origin, frame delivery | `NOT RUN` | Pico и device interfaces не использовались |
-| M1-01 | PS7 inventory gate, exact ADB vectors, Phoenix-family identity tuple, bounded/private evidence, POSIX protocol/quoting and pinned local ADB path | `MOCK + POSIX INTEGRATION PASS OFFLINE` | Full Python suite 198/198 PASS; PowerShell harness 25/25 check groups. Native allowlist runs before synthetic responses; all four identity getprop vectors plus build/release/kernel/process/FD vectors are checked with and without `-t 42`. Exact tuple `A8110/PICOA8110/Phoenix_ovs/Pico` is retained with field provenance; wrong/prefix/missing/malformed/multiline members and identity-command errors fail closed. Evidence distinguishes `phoenix_family VERIFIED` from owner-declared Pico 4 Pro hardware variant `NOT_VERIFIED`. Existing pinned-path, dry-run, WSL `/bin/sh`, tab-byte/parser, Android 10 argv-join and `ps` framing checks remain. ADB client/server and Pico не запускались; synthetic result is not experimental PASS |
+| M1-01 | PS7 inventory gate, exact ADB vectors, Phoenix-family identity tuple, bounded/private evidence, POSIX protocol/quoting, pinned local ADB path and Android process names containing `:` | `MOCK + POSIX INTEGRATION PASS OFFLINE` | Full Python suite 198/198 PASS; PowerShell harness 28/28 check groups. Native allowlist runs before synthetic responses; all identity getprop, build/release/kernel/process/FD vectors are checked with and without `-t 42`. Exact tuple `A8110/PICOA8110/Phoenix_ovs/Pico` remains owner-bound; software tuple does not verify Pico 4 Pro hardware variant. 13 matching synthetic processes, with colon-name at index 13, preserve the exact name and all 13 PID reach FD probes; slash-name and unexpected protocol records fail closed. Existing pinned-path, dry-run, WSL `/bin/sh`, tab-byte/parser, Android 10 argv-join and `ps` framing checks remain. Owner-reported hardware formatting was not rechecked. ADB client/server and Pico не запускались; synthetic result is not experimental PASS |
 
 ## Будущие runtime acceptance
 

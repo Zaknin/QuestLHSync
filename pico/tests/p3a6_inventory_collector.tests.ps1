@@ -272,7 +272,7 @@ foreach ($fieldName in @('product_model', 'product_device', 'product_name', 'pro
 }
 Assert-True ($tupleEvidence.identity.owner_declared_target -eq 'Pico 4 Pro' -and $tupleEvidence.identity.android_property_tuple_status -eq 'VERIFIED' -and $tupleEvidence.identity.phoenix_family_status -eq 'VERIFIED') 'exact tuple must verify only the owner-bound Phoenix-family software identity'
 Assert-True ($tupleEvidence.identity.pico_4_pro_hardware_variant_status -eq 'NOT_VERIFIED' -and $tupleEvidence.identity.cryptographic_attestation -eq $false) 'Android properties must not be represented as Pro hardware attestation'
-Assert-True ($tupleEvidence.collector.version -eq 'P3-A6-M1.4-v1' -and $tupleEvidence.collector.source_sha256.module -match '^[0-9a-f]{64}$') 'identity evidence must identify the collector revision and module digest'
+Assert-True ($tupleEvidence.collector.version -eq 'P3-A6-M1.5-v1' -and $tupleEvidence.collector.source_sha256.module -match '^[0-9a-f]{64}$') 'identity evidence must identify the collector revision and module digest'
 Assert-StandardRunArgumentVectors $case.Calls
 $passCount++
 
@@ -424,6 +424,77 @@ $pidMatches = @($pidEvidence.records | Where-Object { $_.kind -eq 'fd_inventory'
 Assert-True ($pidMatches.Count -eq 1) "disappeared process must be explicit (count=$($pidMatches.Count))"
 $passCount++
 
+# Android process names may contain a literal colon; all 13 matching entries must parse and reach /proc FD inventory.
+$colonProcessLines = [System.Collections.Generic.List[string]]::new()
+for ($processIndex = 1; $processIndex -le 12; $processIndex++) {
+    $colonProcessLines.Add("$($processIndex + 122) com.picovr.quickcamera.$processIndex")
+}
+$colonProcessLines.Add('135 com.picovr.quickcamera:service')
+$colonProcessOutput = ($colonProcessLines -join "`n") + "`nP3A6`tPROCESS_STATUS`tOBSERVED`n"
+$colonResponder = {
+    param([string[]]$Arguments, [int]$TimeoutMs)
+    $kind = Get-TestCommandKind -Arguments $Arguments
+    if ($kind -eq 'PROCESS_PROBE') { return New-Response -Stdout $colonProcessOutput }
+    if ($kind -eq 'FD_PROBE') { return New-Response -Stdout "P3A6`tSTATUS`tPROCESS_DISAPPEARED`n" }
+    return & (Get-StandardResponder) $Arguments $TimeoutMs
+}.GetNewClosure()
+$module = Get-Module -Name 'P3A6Inventory'
+foreach ($colonTransport in @($null, '42')) {
+    if ($colonTransport) { $case = Invoke-TestRun $colonResponder (New-Approval) $confirmation -TransportId $colonTransport }
+    else { $case = Invoke-TestRun $colonResponder (New-Approval) $confirmation }
+    $colonEvidenceText = Read-EvidenceText $case.Result
+    $colonEvidence = $colonEvidenceText | ConvertFrom-Json -AsHashtable
+    Assert-True ($case.Result.status -ne 'PARTIAL_UNEXPECTED_OUTPUT' -and $colonEvidence.fields.process_inventory.status -eq 'OBSERVED' -and $colonEvidence.fields.process_inventory.value -eq 13) '13 matching Android processes including index 13 with colon must parse as observed'
+    $colonRecord = @($colonEvidence.records | Where-Object { $_.kind -eq 'process' -and $_.pid -eq 135 })[0]
+    Assert-True ($colonRecord.process_name -ceq 'com.picovr.quickcamera:service') 'colon process name must be preserved exactly in private evidence'
+    $fdCalls = @($case.Calls | Where-Object { (Get-TestCommandKind -Arguments $_.Arguments) -eq 'FD_PROBE' })
+    Assert-True ($fdCalls.Count -eq 13) 'every matching process, including the colon process, must reach the read-only FD probe'
+    Assert-StandardRunArgumentVectors $case.Calls $colonTransport
+    $fdProcessIds = [System.Collections.Generic.List[int]]::new()
+    foreach ($fdCall in $fdCalls) {
+        Assert-True ($fdCall.AllowedByNative -eq $true) 'every synthetic FD response must pass the actual native allowlist first'
+        $fdScript = $fdCall.Arguments[-1]
+        Assert-True ($fdScript -match "(?s)^'# pico-p3a6-fd-probe\r?\npid=(\d+)\r?\nlimit=(\d+)\r?\n") 'FD vector must contain the generated protocol script'
+        $fdPid = [int]$Matches[1]
+        $fdBudget = [int]$Matches[2]
+        $fdProcessIds.Add($fdPid)
+        $expectedFdScript = & $module { param($processId, $budget) Get-P3A6ProbeScript -ProcessId $processId -RecordBudget $budget } $fdPid $fdBudget
+        $expectedQuotedFdScript = & $module { param($probe) ConvertTo-P3A6PosixShellArgument -Value $probe } $expectedFdScript
+        [string[]]$expectedFdVector = if ($colonTransport) { @('-t', $colonTransport, 'shell', 'sh', '-c', $expectedQuotedFdScript) } else { @('shell', 'sh', '-c', $expectedQuotedFdScript) }
+        Assert-True (Test-ExactArgumentVector -Actual $fdCall.Arguments -Expected $expectedFdVector) 'each FD probe must retain an exact native argument vector'
+    }
+    Assert-True (($fdProcessIds -join ',') -ceq '123,124,125,126,127,128,129,130,131,132,133,134,135') 'FD probes must include PID 135 for the colon process and preserve enumeration order'
+}
+$passCount++
+
+# A process name outside the literal bounded character allowlist fails closed and is not persisted.
+$malformedProcessName = 'com.picovr/quickcamera'
+$malformedProcessResponder = {
+    param([string[]]$Arguments, [int]$TimeoutMs)
+    if ((Get-TestCommandKind -Arguments $Arguments) -eq 'PROCESS_PROBE') { return New-Response -Stdout "123 $malformedProcessName`nP3A6`tPROCESS_STATUS`tOBSERVED`n" }
+    return & (Get-StandardResponder) $Arguments $TimeoutMs
+}.GetNewClosure()
+$case = Invoke-TestRun $malformedProcessResponder (New-Approval) $confirmation
+$malformedProcessEvidenceText = Read-EvidenceText $case.Result
+$malformedProcessEvidence = $malformedProcessEvidenceText | ConvertFrom-Json -AsHashtable
+Assert-True ($case.Result.status -eq 'PARTIAL_UNEXPECTED_OUTPUT' -and $malformedProcessEvidence.fields.process_inventory.status -eq 'UNAVAILABLE') 'slash in process name must fail closed as unexpected output'
+Assert-True (@($case.Calls | Where-Object { (Get-TestCommandKind -Arguments $_.Arguments) -eq 'FD_PROBE' }).Count -eq 0 -and $malformedProcessEvidenceText -notmatch [regex]::Escape($malformedProcessName)) 'malformed process names must not reach FD probes or be persisted'
+$passCount++
+
+# Unexpected process protocol records fail closed instead of being skipped.
+$unexpectedProcessRecord = "P3A6`tPROCESS_EXTRA`tOBSERVED"
+$unexpectedProcessResponder = {
+    param([string[]]$Arguments, [int]$TimeoutMs)
+    if ((Get-TestCommandKind -Arguments $Arguments) -eq 'PROCESS_PROBE') { return New-Response -Stdout "123 com.picovr.quickcamera`n$unexpectedProcessRecord`nP3A6`tPROCESS_STATUS`tOBSERVED`n" }
+    return & (Get-StandardResponder) $Arguments $TimeoutMs
+}.GetNewClosure()
+$case = Invoke-TestRun $unexpectedProcessResponder (New-Approval) $confirmation
+$unexpectedProcessEvidenceText = Read-EvidenceText $case.Result
+$unexpectedProcessEvidence = $unexpectedProcessEvidenceText | ConvertFrom-Json -AsHashtable
+Assert-True ($case.Result.status -eq 'PARTIAL_UNEXPECTED_OUTPUT' -and $unexpectedProcessEvidence.fields.process_inventory.status -eq 'UNAVAILABLE') 'unexpected process protocol record must fail closed'
+Assert-True (@($case.Calls | Where-Object { (Get-TestCommandKind -Arguments $_.Arguments) -eq 'FD_PROBE' }).Count -eq 0 -and $unexpectedProcessEvidenceText -notmatch 'PROCESS_EXTRA') 'unexpected process protocol record must stop before FD probes and remain private'
+$passCount++
+
 # A failing ps command is explicitly unavailable, never an observed empty process list.
 $psFailure = {
     param([string[]]$Arguments, [int]$TimeoutMs)
@@ -561,4 +632,4 @@ foreach ($root in $script:CreatedOutputRoots) {
     if (Test-Path -LiteralPath $fullRoot) { [IO.Directory]::Delete($fullRoot, $true) }
 }
 
-Write-Output "P3-A6 M1 PowerShell mock collector checks: $passCount/25 PASS"
+Write-Output "P3-A6 M1 PowerShell mock collector checks: $passCount/28 PASS"
