@@ -77,6 +77,78 @@ function Invoke-P3A6GateCli {
     }
 }
 
+function Test-P3A6ApprovalBeforeConfirmation {
+    param(
+        [AllowNull()][object]$Approval,
+        [string]$Action = $script:P3A6Action
+    )
+
+    # A null confirmation exercises every existing approval check without authorizing an action.
+    $decision = Invoke-P3A6GateCli -Approval $Approval -Action $Action -OwnerConfirmation $null
+    if ($decision.status -ne 'BLOCKED_CONFIRMATION_REQUIRED') { return $decision }
+    if ([string]$Approval.approval_id -notmatch '^[A-Za-z0-9._-]{1,64}$') {
+        return [pscustomobject]@{ allowed = $false; status = 'BLOCKED_INVALID_APPROVAL_ID'; reason = 'Approval ID is invalid' }
+    }
+    return [pscustomobject]@{
+        allowed = $true
+        status = 'READY_FOR_INTERACTIVE_CONFIRMATION'
+        reason = 'Approval scope, expiry and limits are valid; owner confirmation is still required'
+        approval_id = [string]$Approval.approval_id
+    }
+}
+
+function Resolve-P3A6SimpleConfirmation {
+    param(
+        [AllowNull()][object]$Approval,
+        [AllowNull()][string]$Response,
+        [Parameter(Mandatory)][bool]$Interactive,
+        [string]$Action = $script:P3A6Action
+    )
+
+    if (-not $Interactive) {
+        return [pscustomobject]@{ accepted = $false; status = 'BLOCKED_NON_INTERACTIVE'; owner_confirmation = $null }
+    }
+    if ($Action -cne $script:P3A6Action) {
+        return [pscustomobject]@{ accepted = $false; status = 'BLOCKED_SCOPE_MISMATCH'; owner_confirmation = $null }
+    }
+    if ($Response -cne 'yes') {
+        return [pscustomobject]@{ accepted = $false; status = 'BLOCKED_CONFIRMATION_REQUIRED'; owner_confirmation = $null }
+    }
+    if ([string]$Approval.approval_id -notmatch '^[A-Za-z0-9._-]{1,64}$') {
+        return [pscustomobject]@{ accepted = $false; status = 'BLOCKED_INVALID_APPROVAL_ID'; owner_confirmation = $null }
+    }
+
+    # Construct the legacy gate token only after exact, interactive lowercase yes.
+    $token = 'P3-A6 APPROVE {0} {1}' -f [string]$Approval.approval_id, $Action
+    return [pscustomobject]@{ accepted = $true; status = 'CONFIRMED'; owner_confirmation = $token }
+}
+
+function Invoke-P3A6ConfirmedInventory {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$Approval,
+        [AllowNull()][string]$Response,
+        [Parameter(Mandatory)][bool]$Interactive,
+        [Parameter(Mandatory)][scriptblock]$AdbExecutor,
+        [string]$OutputRoot = '',
+        [string]$TransportId = '',
+        [string]$Action = $script:P3A6Action,
+        [ValidateRange(1, 600)][int]$MaxDurationSeconds = $script:P3A6MaxDurationSeconds,
+        [ValidateRange(1, 10000)][int]$MaxRecords = $script:P3A6MaxRecords
+    )
+
+    $preflight = Test-P3A6ApprovalBeforeConfirmation -Approval $Approval -Action $Action
+    if (-not $preflight.allowed) {
+        return [pscustomobject]@{ status = [string]$preflight.status; collection_status = 'BLOCKED'; adb_command_count = 0; record_count = 0; evidence_directory = $null; archive_path = $null; marker_path = $null }
+    }
+    $confirmation = Resolve-P3A6SimpleConfirmation -Approval $Approval -Response $Response -Interactive $Interactive -Action $Action
+    if (-not $confirmation.accepted) {
+        return [pscustomobject]@{ status = [string]$confirmation.status; collection_status = 'BLOCKED'; adb_command_count = 0; record_count = 0; evidence_directory = $null; archive_path = $null; marker_path = $null }
+    }
+
+    return Invoke-P3A6Inventory -Approval $Approval -OwnerConfirmation $confirmation.owner_confirmation -AdbExecutor $AdbExecutor -OutputRoot $OutputRoot -TransportId $TransportId -Action $Action -MaxDurationSeconds $MaxDurationSeconds -MaxRecords $MaxRecords
+}
+
 function Test-P3A6OutputPath {
     param([string]$OutputRoot)
 
@@ -659,7 +731,7 @@ function Invoke-P3A6Inventory {
         schema = 'p3a6.private_inventory_evidence.v1'
         record_kind = 'p3a6_read_only_inventory'
         collector = [ordered]@{
-            version = 'P3-A6-M1.5-v1'
+            version = 'P3-A6-M1.6-v1'
             powershell_version = $PSVersionTable.PSVersion.ToString()
             source_sha256 = [ordered]@{
                 entry = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'collect_p3a6_inventory.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -1006,4 +1078,4 @@ function Invoke-P3A6Inventory {
     }
 }
 
-Export-ModuleMember -Function Invoke-P3A6Inventory, Invoke-P3A6NativeAdb
+Export-ModuleMember -Function Invoke-P3A6Inventory, Invoke-P3A6NativeAdb, Test-P3A6ApprovalBeforeConfirmation, Invoke-P3A6ConfirmedInventory

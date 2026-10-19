@@ -173,6 +173,50 @@ function Read-EvidenceText($Result) {
 $confirmation = 'P3-A6 APPROVE test-run-01 read-only-inventory'
 $passCount = 0
 
+# The short interactive confirmation is translated to the shared gate token only after exact lowercase yes.
+$confirmationApproval = New-Approval
+$acceptedConfirmationModule = Get-Module -Name 'P3A6Inventory'
+$acceptedConfirmation = & $acceptedConfirmationModule {
+    param($approval, $response, $interactive)
+    Resolve-P3A6SimpleConfirmation -Approval $approval -Response $response -Interactive $interactive -Action 'read-only-inventory'
+} $confirmationApproval 'yes' $true
+Assert-True ($acceptedConfirmation.accepted -eq $true -and $acceptedConfirmation.owner_confirmation -ceq 'P3-A6 APPROVE test-run-01 read-only-inventory') 'exact interactive yes must construct the existing approval-bound token'
+$acceptedConfirmationCalls = [System.Collections.Generic.List[object]]::new()
+$acceptedConfirmationResponder = {
+    param([string[]]$Arguments, [int]$TimeoutMs)
+    $response = & (Get-StandardResponder) $Arguments $TimeoutMs
+    if ((Get-TestCommandKind -Arguments $Arguments) -eq 'PROCESS_PROBE') { $response.Stdout = "123 com.picovr.quickcamera`nP3A6`tPROCESS_STATUS`tOBSERVED`n" }
+    return $response
+}.GetNewClosure()
+$acceptedConfirmationExecutor = New-MockExecutor $acceptedConfirmationResponder $acceptedConfirmationCalls
+$acceptedConfirmationRoot = New-TestOutputRoot
+$acceptedConfirmationResult = Invoke-P3A6ConfirmedInventory -Approval $confirmationApproval -Response 'yes' -Interactive $true -AdbExecutor $acceptedConfirmationExecutor -OutputRoot $acceptedConfirmationRoot -MaxDurationSeconds 60 -MaxRecords 200
+Assert-True ($acceptedConfirmationResult.status -eq 'COMPLETE') "exact yes must continue through the existing shared gate with mock ADB (got $($acceptedConfirmationResult.status))"
+Assert-StandardRunArgumentVectors $acceptedConfirmationCalls
+$acceptedConfirmationEvidence = Read-EvidenceText $acceptedConfirmationResult | ConvertFrom-Json -AsHashtable
+Assert-True ($acceptedConfirmationEvidence.approval_id -eq $confirmationApproval.approval_id -and $acceptedConfirmationEvidence.action -eq 'read-only-inventory') 'approval ID and action must stay associated with private evidence without being typed'
+
+foreach ($rejectedResponse in @('no', '', 'YES', 'confirm', 'yes ')) {
+    $rejectedConfirmation = & $acceptedConfirmationModule {
+        param($approval, $response, $interactive)
+        Resolve-P3A6SimpleConfirmation -Approval $approval -Response $response -Interactive $interactive -Action 'read-only-inventory'
+    } $confirmationApproval $rejectedResponse $true
+    Assert-True ($rejectedConfirmation.accepted -eq $false -and $null -eq $rejectedConfirmation.owner_confirmation) "rejected response '$rejectedResponse' must not produce a gate token"
+    $rejectedCalls = [System.Collections.Generic.List[object]]::new()
+    $rejectedExecutor = New-MockExecutor (Get-StandardResponder) $rejectedCalls
+    $rejectedResult = Invoke-P3A6ConfirmedInventory -Approval $confirmationApproval -Response $rejectedResponse -Interactive $true -AdbExecutor $rejectedExecutor -OutputRoot (New-TestOutputRoot)
+    Assert-True ($rejectedResult.status -eq 'BLOCKED_CONFIRMATION_REQUIRED' -and $rejectedCalls.Count -eq 0) "rejected response '$rejectedResponse' must be blocked before any ADB executor call"
+}
+$eofConfirmation = & $acceptedConfirmationModule {
+    param($approval, $response, $interactive)
+    Resolve-P3A6SimpleConfirmation -Approval $approval -Response $response -Interactive $interactive -Action 'read-only-inventory'
+} $confirmationApproval $null $false
+$eofCalls = [System.Collections.Generic.List[object]]::new()
+$eofExecutor = New-MockExecutor (Get-StandardResponder) $eofCalls
+$eofResult = Invoke-P3A6ConfirmedInventory -Approval $confirmationApproval -Response $null -Interactive $false -AdbExecutor $eofExecutor -OutputRoot (New-TestOutputRoot)
+Assert-True ($eofConfirmation.accepted -eq $false -and $eofResult.status -eq 'BLOCKED_NON_INTERACTIVE' -and $eofCalls.Count -eq 0) 'non-interactive EOF must be rejected before any ADB executor call'
+$passCount++
+
 # Missing approval blocks before the first device-facing call.
 $case = Invoke-TestRun (Get-StandardResponder) $null $confirmation
 Assert-True ($case.Result.status -eq 'BLOCKED_NO_APPROVAL') 'missing approval must be blocked'
@@ -272,7 +316,7 @@ foreach ($fieldName in @('product_model', 'product_device', 'product_name', 'pro
 }
 Assert-True ($tupleEvidence.identity.owner_declared_target -eq 'Pico 4 Pro' -and $tupleEvidence.identity.android_property_tuple_status -eq 'VERIFIED' -and $tupleEvidence.identity.phoenix_family_status -eq 'VERIFIED') 'exact tuple must verify only the owner-bound Phoenix-family software identity'
 Assert-True ($tupleEvidence.identity.pico_4_pro_hardware_variant_status -eq 'NOT_VERIFIED' -and $tupleEvidence.identity.cryptographic_attestation -eq $false) 'Android properties must not be represented as Pro hardware attestation'
-Assert-True ($tupleEvidence.collector.version -eq 'P3-A6-M1.5-v1' -and $tupleEvidence.collector.source_sha256.module -match '^[0-9a-f]{64}$') 'identity evidence must identify the collector revision and module digest'
+Assert-True ($tupleEvidence.collector.version -eq 'P3-A6-M1.6-v1' -and $tupleEvidence.collector.source_sha256.module -match '^[0-9a-f]{64}$') 'identity evidence must identify the collector revision and module digest'
 Assert-StandardRunArgumentVectors $case.Calls
 $passCount++
 
@@ -632,4 +676,4 @@ foreach ($root in $script:CreatedOutputRoots) {
     if (Test-Path -LiteralPath $fullRoot) { [IO.Directory]::Delete($fullRoot, $true) }
 }
 
-Write-Output "P3-A6 M1 PowerShell mock collector checks: $passCount/28 PASS"
+Write-Output "P3-A6 M1.6 PowerShell mock collector checks: $passCount/29 PASS"

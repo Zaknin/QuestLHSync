@@ -220,6 +220,16 @@ class TestP3A6HardwareExecutionGate(unittest.TestCase):
             datetime(2026, 10, 18, 14, 0, tzinfo=timezone.utc),
         ).allowed)
 
+    def test_simple_yes_and_rejected_responses_are_not_shared_gate_tokens(self):
+        check_hardware_execution_gate = _load_target('pico.tools.p3a6_execution_gate', self).check_hardware_execution_gate
+        for response in ('yes', 'no', '', 'YES', 'confirm', None):
+            with self.subTest(response=response):
+                decision = check_hardware_execution_gate(
+                    self.approval, 'read-only-inventory', response, self.now,
+                )
+                self.assertFalse(decision.allowed)
+                self.assertEqual(decision.status, 'BLOCKED_CONFIRMATION_REQUIRED')
+
     def test_unbounded_or_overlong_approval_is_rejected(self):
         check_hardware_execution_gate = _load_target('pico.tools.p3a6_execution_gate', self).check_hardware_execution_gate
         phrase = 'P3-A6 APPROVE run-2026-10-18-01 read-only-inventory'

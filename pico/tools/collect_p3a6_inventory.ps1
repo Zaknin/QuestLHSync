@@ -48,13 +48,32 @@ catch {
     exit 4
 }
 
-$confirmation = Read-Host "Type the exact owner confirmation for approval '$($approval.approval_id)' and action 'read-only-inventory'"
+$preflight = Test-P3A6ApprovalBeforeConfirmation -Approval $approval -Action 'read-only-inventory'
+if (-not $preflight.allowed) {
+    [Console]::Error.WriteLine("$($preflight.status): approval is invalid, expired or outside the collector scope.")
+    exit 4
+}
+
+$maximumDuration = [Math]::Min(60, [int]$approval.max_duration_seconds)
+$maximumRecords = [Math]::Min(200, [int]$approval.max_observations)
+Write-Host 'Device: Pico 4 Pro'
+Write-Host 'Action: read-only-inventory'
+Write-Host "Maximum duration: $maximumDuration seconds"
+Write-Host "Maximum records: $maximumRecords"
+
+$interactive = -not [Console]::IsInputRedirected
+$response = $null
+if ($interactive) {
+    try { $response = Read-Host 'Confirm operation (yes/no)' }
+    catch { $response = $null }
+}
+
 $executor = {
     param([string[]]$Arguments, [int]$TimeoutMs)
     return Invoke-P3A6NativeAdb -Arguments $Arguments -TimeoutMs $TimeoutMs
 }.GetNewClosure()
 
-$result = Invoke-P3A6Inventory -Approval $approval -OwnerConfirmation $confirmation -AdbExecutor $executor -OutputRoot $OutputRoot -TransportId $TransportId
+$result = Invoke-P3A6ConfirmedInventory -Approval $approval -Response $response -Interactive $interactive -AdbExecutor $executor -OutputRoot $OutputRoot -TransportId $TransportId
 Write-Output ($result | ConvertTo-Json -Depth 8 -Compress)
 if ($result.status -eq 'COMPLETE') { exit 0 }
 if ($result.status -like 'PARTIAL_*' -or $result.status -eq 'PARTIAL_LIMITATIONS') { exit 5 }
