@@ -1,5 +1,9 @@
 # P3-A6-M2 — Read-Only Camera Node Inventory Handover
 
+## Current SOF provenance status — M2.4
+
+The owner supplied a targeted Phoenix kernel source lead at commit `ceafd3afc0208c03e0eb7a1a60939d147f92d72a`. The pinned source checkout and six named files are not present in the local workspace, and the commit object is absent from the local Git object database. This task was offline-only, so no source fetch or upstream file hashes were produced. The only M2.2 private evidence fields read were build fingerprint `Pico/Phoenix_ovs/PICOA8110:10/5.11.2/smartcm.1725996131:user/dev-keys` and kernel release `4.19.81-perf+`. The candidate is `COMPATIBLE_BUT_UNVERIFIED` at product-family level; exact running-kernel applicability is `UNKNOWN`. Kernel SOF ABI and the kernel-to-CSL bridge remain `BLOCKED`. See [`P3-A6-M2.4-Phoenix-Kernel-SOF-to-CSL-Audit.md`](P3-A6-M2.4-Phoenix-Kernel-SOF-to-CSL-Audit.md). Do not begin SOF runtime instrumentation or alter any safety gate.
+
 Дата: 2026-10-19. Initial M2 implementation/verification was offline only at baseline `1bbb542ff90a1ac60876bc1991aff68270864a2e`; the owner-reported later M2.2 device result is recorded below. The M2.3 code changes and source audit used baseline `33e28e4cdca2089925e28ad8b14fe7d41d9c08e7` and were offline only. No ADB, Pico, camera service, `/proc`, root, tracing, SteamVR, Lighthouse or approval record was used for M2.3.
 
 ## Итог
@@ -60,7 +64,7 @@ The owner-reported M2.2 hardware run completed both sources on the Pico 4 Pro: s
 
 M2.3 baseline: `33e28e4cdca2089925e28ad8b14fe7d41d9c08e7`. Evidence schema is `p3a6.m2.node_inventory.v2`; collector revision is `P3-A6-M2-v3`. Parser/evidence now retain each exact validated `videoN` as `node_id`. Bounded sysfs field statuses distinguish `ATTRIBUTE_MISSING`, `PERMISSION_DENIED` and `INVALID`; failed values are empty in the wire protocol and `null` in parsed evidence. `PERMISSION_DENIED` means the fixed path was not readable/openable in the shell context; it does not identify DAC versus SELinux. Malformed raw values are discarded. Evidence adds a `node_correlations` summary: major groups are explicitly marked ambiguous where multiple nodes share a major, and an individual pair is emitted only for a unique exact `major:minor` on both sources. This proves neither process ownership nor PVR ioctl/queue attribution.
 
-The full SOF provenance audit is [`P3-A6-M2.3-Node-Identity-and-SOF-Provenance.md`](P3-A6-M2.3-Node-Identity-and-SOF-Provenance.md). Local project/source search found no matching `cam_req_mgr` source/header or definitions for `V4L_EVENT_CAM_REQ_MGR_SOF` / `V4L_EVENT_CAM_REQ_MGR_SOF_BOOT_TS`; no web or device access was used. Event payload, ID semantics, clock domain, version differences and Pico applicability remain **BLOCKED/UNKNOWN**. Existing Pico ELF research separately shows a QTIMER-labeled CSL message and previous-ring-slot fallback, but does not tie either to these kernel events or to physical SOF/exposure start.
+The historical M2.3 node/SOF audit is [`P3-A6-M2.3-Node-Identity-and-SOF-Provenance.md`](P3-A6-M2.3-Node-Identity-and-SOF-Provenance.md); the current Phoenix follow-up is [`P3-A6-M2.4-Phoenix-Kernel-SOF-to-CSL-Audit.md`](P3-A6-M2.4-Phoenix-Kernel-SOF-to-CSL-Audit.md). The new repository lead does not close the earlier gap: event payload, ID semantics, clock domain, version match and Pico applicability remain **BLOCKED/UNKNOWN** until the pinned source bytes and a runtime build mapping are available. Existing Pico ELF research separately shows a QTIMER-labeled CSL message and previous-ring-slot fallback, but does not tie either to the kernel events or physical SOF/exposure start.
 
 M2.3 implementation SHA-256: `4c718118378e6be05de9ece4afa53bd481df46e286b9b1137db98506417602ca`; pinned ADB runner is unchanged. Current fixed probe hashes are listed separately below.
 
@@ -91,6 +95,8 @@ M2.3 offline verification: PowerShell M2 harness **410 assertions PASS**; `pytho
 M2.2 hardware metadata inventory is **`PARTIAL_LIMITATIONS`**, not PASS; the two unavailable sysfs names and six `/dev` records are owner-reported observations. No additional node-only hardware run is recommended solely to recover historical `videoN` IDs, since they cannot be reconstructed from the saved evidence. A later separately approved run would use the v3 parser to preserve IDs and bounded field statuses.
 
 For SOF provenance, **continue targeted offline, build-matched Qualcomm kernel source/header research. A runtime SOF/exposure attribution experiment remains BLOCKED** until the exact event contract and Pico applicability are established and a safe numeric-only observation method is separately reviewed. No new approval or hardware action was performed here.
+
+M2.4 offline verification: `python -m unittest discover -s pico/tests` — **201/201 PASS**; `pwsh -NoProfile -File .\pico\tests\p3a6_inventory_collector.tests.ps1` — **29/29 PASS**; `pwsh -NoProfile -File .\pico\tests\p3a6_camera_nodes.tests.ps1` — **410 assertions PASS**; `pwsh -NoProfile -File .\pico\tests\p3a6_posix_shell_integration.tests.ps1` — **PASS**; `git diff --check` — **PASS**. Documentation-only research; no ADB, device, camera or approval action occurred. These regressions do not establish Phoenix source contents or running-kernel applicability.
 
 Будущая команда (не запускалась):
 
