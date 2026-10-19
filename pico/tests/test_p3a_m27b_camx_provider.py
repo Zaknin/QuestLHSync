@@ -21,8 +21,11 @@ def elf64():
     return bytes(raw)
 
 
-def discovery(paths=()):
-    lines = [f'P3A27A\tROOT\t{root}\tSCANNED' for root in m.ROOTS]
+def discovery(paths=(), incomplete_roots=()):
+    lines = [
+        f'P3A27A\tROOT\t{root}\t{"FIND_ERROR" if root in incomplete_roots else "SCANNED"}'
+        for root in m.ROOTS
+    ]
     lines.extend(f'P3A27A\tCANDIDATE\t{path}\t{path}' for path in paths)
     return '\n'.join(lines) + '\n'
 
@@ -172,7 +175,45 @@ class CamxProviderOfflineTests(unittest.TestCase):
             {'observed_path': path, 'source_path': path} for path in paths
         ])
         self.assertEqual(set(parsed['root_status']), set(m.ROOTS))
-        self.assertEqual(parsed['root_status']['/system'], 'SCANNED')
+        self.assertEqual(parsed['root_status']['/system/lib64'], 'SCANNED')
+
+    def test_discovery_scope_is_limited_to_fixed_library_subtrees(self):
+        self.assertEqual(m.ROOTS, (
+            '/vendor/lib64', '/system/lib64', '/odm/lib64',
+            '/product/lib64', '/system_ext/lib64', '/apex',
+        ))
+        script = m.DISCOVERY_SCRIPT
+        self.assertIn('find "$library_root" -mindepth 2 -name', script)
+        self.assertIn('find "$root" -mindepth 2 -maxdepth 2 -type d -name lib64', script)
+        for broad_root in ('find /vendor ', 'find /system ', 'find /odm ',
+                           'find /product ', 'find /system_ext '):
+            self.assertNotIn(broad_root, script)
+
+    def test_discovery_parser_keeps_candidate_from_incomplete_find_root(self):
+        root = '/vendor/lib64'
+        candidate = '/vendor/lib64/camx_core.so'
+        rows = [
+            f'P3A27A\tROOT\t{item}\t{"FIND_ERROR" if item == root else "SCANNED"}'
+            for item in m.ROOTS
+        ]
+        rows.append(f'P3A27A\tCANDIDATE\t{candidate}\t{candidate}')
+        parsed = m.parse_discovery_output('\n'.join(rows) + '\n')
+        self.assertEqual(parsed['candidates'], [
+            {'observed_path': candidate, 'source_path': candidate},
+        ])
+        self.assertEqual(parsed['root_status'][root], 'FIND_ERROR')
+        self.assertIn(root, parsed['limited_roots'])
+        self.assertFalse(parsed['scan_complete'])
+
+    def test_discovery_parser_never_calls_empty_partial_scan_complete(self):
+        rows = [
+            f'P3A27A\tROOT\t{root}\t{"SCAN_INCOMPLETE" if root == "/vendor/lib64" else "SCANNED"}'
+            for root in m.ROOTS
+        ]
+        parsed = m.parse_discovery_output('\n'.join(rows) + '\n')
+        self.assertEqual(parsed['status'], 'NO_CANDIDATES')
+        self.assertFalse(parsed['scan_complete'])
+        self.assertIn('/vendor/lib64', parsed['limited_roots'])
 
     def test_discovery_parser_rejects_bad_framing_records_and_paths(self):
         bad_outputs = (
@@ -406,6 +447,51 @@ Dynamic section at offset 0x100 contains 1 entry:
             self.assertEqual([f['elf']['build_id'] for f in report['files']], ['ab' * 20] * 2)
             self.assertEqual(report['adb_command_count'], len(calls))
 
+    def test_collection_acquires_partial_find_candidate_but_keeps_overall_partial(self):
+        path = '/vendor/lib64/camx_core.so'
+        data = elf64()
+        digest = hashlib.sha256(data).hexdigest()
+        selector = m.device_selector()
+        metadata = {'build_id': 'cd' * 20, 'exported_symbols': ['CSLRegisterMessageHandler'],
+                    'undefined_symbols': [], 'dt_needed': ['libcamx_utils.so'],
+                    'bridge_symbol_hits': ['CSLRegisterMessageHandler'],
+                    'dynamic_symbol_table_present': True, 'metadata_status': 'OBSERVED'}
+
+        def executor(argv, *, timeout, stage):
+            self.assertTrue(m.allowed_adb_arguments(argv, selector, [path], stage), argv)
+            if argv == ['connect', TEST_TARGET]:
+                return f'connected to {TEST_TARGET}\n'
+            command = argv[len(selector):]
+            if command == ['get-state']:
+                return 'device\n'
+            if len(command) == 3 and command[:2] == ['shell', 'getprop']:
+                return m.EXPECTED_PROPERTIES[command[2]] + '\n'
+            if command == ['shell', 'sh', '-c', m.SH_DISCOVERY_ARGUMENT]:
+                return discovery([path], incomplete_roots=('/vendor/lib64',))
+            if len(command) == 4 and command[:3] == ['shell', 'wc', '-c']:
+                return f'{len(data)} {command[3]}\n'
+            if len(command) == 4 and command[:3] == ['shell', 'readlink', '-f']:
+                return command[3] + '\n'
+            if len(command) == 3 and command[:2] == ['shell', 'sha256sum']:
+                return f'{digest}  {command[2]}\n'
+            if len(command) == 3 and command[0] == 'pull':
+                destination = Path(command[2])
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(data)
+                return ''
+            self.fail(f'unexpected synthetic ADB vector: {argv!r}')
+
+        with tempfile.TemporaryDirectory() as td:
+            report = m.collect_provider(
+                selector, Path(td), executor=executor,
+                metadata_reader=lambda path, timeout=20: metadata,
+                owner_authorized=True, monotonic_fn=lambda: 0.0,
+            )
+        self.assertEqual(report['root_status']['/vendor/lib64'], 'FIND_ERROR')
+        self.assertEqual(report['candidates'], [{'observed_path': path, 'source_path': path}])
+        self.assertEqual(report['verified_count'], 1)
+        self.assertEqual(report['status'], 'PARTIAL')
+
     def test_total_size_limit_blocks_all_pulls_before_arbitrary_candidate_selection(self):
         paths = ['/system/lib64/camx_core.so', '/vendor/lib64/camx_core.so',
                  '/odm/lib64/camx_core.so']
@@ -561,6 +647,8 @@ Dynamic section at offset 0x100 contains 1 entry:
         plan = m.dry_run_plan()
         self.assertEqual(plan['action'], m.ACTION)
         self.assertEqual(plan['discovery_script_sha256'], m.SCRIPT_SHA256)
+        self.assertEqual(plan['search_roots'], list(m.ROOTS))
+        self.assertEqual(plan['apex_search_scope'], 'immediate APEX package lib64 directories only')
         self.assertFalse(plan['device_facing_calls_performed'])
         output = io.StringIO()
         with patch.object(m.sys, 'stdout', output), \

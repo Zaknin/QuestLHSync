@@ -24,11 +24,11 @@ from uuid import uuid4
 
 if __package__:
     from .p3a_collect_producers import build_zip, canonical_commit, sha256, validate_arm64_elf
-    from .p3a_quickcamera_inventory import ROOT, ROOTS
+    from .p3a_quickcamera_inventory import ROOT
     from .p3a6_execution_gate import TARGET_DEVICE
 else:
     from p3a_collect_producers import build_zip, canonical_commit, sha256, validate_arm64_elf
-    from p3a_quickcamera_inventory import ROOT, ROOTS
+    from p3a_quickcamera_inventory import ROOT
     from p3a6_execution_gate import TARGET_DEVICE
 
 
@@ -46,6 +46,10 @@ TARGET_SERIAL_ENV = 'P3A_M27B_TARGET_SERIAL'
 TARGET_SERIAL_SHA256 = 'd5291a8f32e51e3bfa1b20a3a0dea1c7b3afb7d3f9c3cbabceceac3be7f2fc2c'
 TARGET_FINGERPRINT = 'Pico/Phoenix_ovs/PICOA8110:10/5.11.2/smartcm.1725996131:user/dev-keys'
 TARGET_ABI = 'arm64-v8a'
+ROOTS = (
+    '/vendor/lib64', '/system/lib64', '/odm/lib64',
+    '/product/lib64', '/system_ext/lib64', '/apex',
+)
 EXPECTED_PROPERTIES = {
     'ro.product.model': 'A8110',
     'ro.product.device': 'PICOA8110',
@@ -84,25 +88,31 @@ def _render_discovery_script(roots: tuple[str, ...] = ROOTS) -> str:
     root_case_patterns = '|'.join(root.rstrip('/') + '/*' for root in roots)
     return (
         'set -f\n'
-        f'for root in {root_words}; do\n'
-        '  if [ ! -d "$root" ]; then\n'
-        "    printf 'P3A27A\\tROOT\\t%s\\tABSENT\\n' \"$root\"\n"
-        '    continue\n'
-        '  fi\n'
-        '  if [ ! -r "$root" ] || [ ! -x "$root" ]; then\n'
-        "    printf 'P3A27A\\tROOT\\t%s\\tUNAVAILABLE\\n' \"$root\"\n"
-        '    continue\n'
-        '  fi\n'
-        "  paths=$(find \"$root\" -name 'camx_core.so' -print 2>/dev/null)\n"
-        '  find_status=$?\n'
-        '  if [ "$find_status" -ne 0 ]; then\n'
-        "    printf 'P3A27A\\tROOT\\t%s\\tFIND_ERROR\\n' \"$root\"\n"
-        '    continue\n'
-        '  fi\n'
-        "  printf 'P3A27A\\tROOT\\t%s\\tSCANNED\\n' \"$root\"\n"
-        '  old_ifs=$IFS\n'
-        "  IFS='\n'\n"
-        '  for candidate in $paths; do\n'
+        "old_ifs=$IFS\n"
+        "IFS='\n'\n"
+        'scan_library_root() {\n'
+        '  primary_root=$1\n'
+        '  library_roots=$2\n'
+        '  initial_status=$3\n'
+        '  root_status=$initial_status\n'
+        '  candidate_paths=\n'
+        '  for library_root in $library_roots; do\n'
+        '    if [ -e "$library_root/camx_core.so" ] || [ -L "$library_root/camx_core.so" ]; then\n'
+        '      candidate_paths="${candidate_paths}${candidate_paths:+\n}$library_root/camx_core.so"\n'
+        '    fi\n'
+        "    nested_paths=$(find \"$library_root\" -mindepth 2 -name 'camx_core.so' -print 2>/dev/null)\n"
+        '    find_status=$?\n'
+        '    if [ "$find_status" -ne 0 ]; then root_status=FIND_ERROR; fi\n'
+        '    if [ -n "$nested_paths" ]; then\n'
+        '      if [ -n "$candidate_paths" ]; then\n'
+        '        candidate_paths="${candidate_paths}\n$nested_paths"\n'
+        '      else\n'
+        '        candidate_paths=$nested_paths\n'
+        '      fi\n'
+        '    fi\n'
+        '  done\n'
+        "  printf 'P3A27A\\tROOT\\t%s\\t%s\\n' \"$primary_root\" \"$root_status\"\n"
+        '  for candidate in $candidate_paths; do\n'
         '    [ -n "$candidate" ] || continue\n'
         '    if [ -L "$candidate" ]; then\n'
         '      resolved=$(readlink -f "$candidate" 2>/dev/null)\n'
@@ -125,8 +135,35 @@ def _render_discovery_script(roots: tuple[str, ...] = ROOTS) -> str:
         "      printf 'P3A27A\\tCANDIDATE_LIMITATION\\t%s\\tNOT_REGULAR_FILE\\n' \"$candidate\"\n"
         '    fi\n'
         '  done\n'
-        '  IFS=$old_ifs\n'
+        '}\n'
+        f'for root in {root_words}; do\n'
+        '  if [ ! -d "$root" ]; then\n'
+        "    printf 'P3A27A\\tROOT\\t%s\\tABSENT\\n' \"$root\"\n"
+        '    continue\n'
+        '  fi\n'
+        '  if [ ! -r "$root" ] || [ ! -x "$root" ]; then\n'
+        "    printf 'P3A27A\\tROOT\\t%s\\tUNAVAILABLE\\n' \"$root\"\n"
+        '    continue\n'
+        '  fi\n'
+        '  case "$root" in */apex)\n'
+        '    set +f\n'
+        '    library_roots=$(for apex_lib64 in "$root"/*/lib64; do\n'
+        '      if [ -d "$apex_lib64" ]; then printf "%s\\n" "$apex_lib64"; fi\n'
+        '    done)\n'
+        '    set -f\n'
+        '    find "$root" -mindepth 2 -maxdepth 2 -type d -name lib64 -print >/dev/null 2>&1\n'
+        '    find_status=$?\n'
+        '    initial_status=SCANNED\n'
+        '    [ "$find_status" -eq 0 ] || initial_status=FIND_ERROR\n'
+        '    ;;\n'
+        '  *)\n'
+        '    library_roots=$root\n'
+        '    initial_status=SCANNED\n'
+        '    ;;\n'
+        '  esac\n'
+        '  scan_library_root "$root" "$library_roots" "$initial_status"\n'
         'done\n'
+        'IFS=$old_ifs\n'
     )
 
 
@@ -203,7 +240,7 @@ def valid_library_path(path: str, roots: tuple[str, ...] = ROOTS) -> bool:
         return False
     relative_parts = path[len(root.rstrip('/')) + 1:].split('/')
     return (bool(re.fullmatch(r'[A-Za-z0-9_.+@=-]+\.so(?:\.[0-9]+)*', parts[-1]))
-            and 'lib64' in relative_parts[:-1])
+            and (root.endswith('/lib64') or 'lib64' in relative_parts[:-1]))
 
 
 def valid_source_path(path: str, roots: tuple[str, ...] = ROOTS) -> bool:
@@ -227,7 +264,7 @@ def parse_discovery_output(raw: str, roots: tuple[str, ...] = ROOTS) -> dict[str
     roots_seen: dict[str, str] = {}
     candidates: list[dict[str, str]] = []
     limitations: list[dict[str, str]] = []
-    statuses = {'SCANNED', 'ABSENT', 'UNAVAILABLE', 'FIND_ERROR'}
+    statuses = {'SCANNED', 'ABSENT', 'UNAVAILABLE', 'FIND_ERROR', 'SCAN_INCOMPLETE'}
     for line in _protocol_lines(raw):
         fields = line.split('\t')
         if len(fields) == 4 and fields[0:2] == ['P3A27A', 'ROOT']:
@@ -242,7 +279,8 @@ def parse_discovery_output(raw: str, roots: tuple[str, ...] = ROOTS) -> dict[str
                 raise ValueError('INVALID_SOURCE_PATH')
             path_root = next((root for root in expected_roots
                               if observed_path.startswith(root.rstrip('/') + '/')), None)
-            if path_root not in roots_seen or roots_seen[path_root] != 'SCANNED':
+            if path_root not in roots_seen or roots_seen[path_root] not in (
+                    'SCANNED', 'FIND_ERROR', 'SCAN_INCOMPLETE'):
                 raise ValueError('UNEXPECTED_RECORD')
             if any(item['observed_path'] == observed_path for item in candidates):
                 raise ValueError('DUPLICATE_SOURCE_PATH')
@@ -257,7 +295,8 @@ def parse_discovery_output(raw: str, roots: tuple[str, ...] = ROOTS) -> dict[str
                 raise ValueError('INVALID_CANDIDATE_LIMITATION')
             path_root = next((root for root in expected_roots
                               if observed_path.startswith(root.rstrip('/') + '/')), None)
-            if path_root not in roots_seen or roots_seen[path_root] != 'SCANNED':
+            if path_root not in roots_seen or roots_seen[path_root] not in (
+                    'SCANNED', 'FIND_ERROR', 'SCAN_INCOMPLETE'):
                 raise ValueError('UNEXPECTED_RECORD')
             limitations.append({'observed_path': observed_path, 'code': code})
         else:
@@ -269,7 +308,9 @@ def parse_discovery_output(raw: str, roots: tuple[str, ...] = ROOTS) -> dict[str
         'candidates': candidates,
         'candidate_limitations': limitations,
         'limited_roots': [root for root, status in roots_seen.items()
-                          if status in ('UNAVAILABLE', 'FIND_ERROR')],
+                          if status in ('UNAVAILABLE', 'FIND_ERROR', 'SCAN_INCOMPLETE')],
+        'scan_complete': not any(status in ('UNAVAILABLE', 'FIND_ERROR', 'SCAN_INCOMPLETE')
+                                 for status in roots_seen.values()),
         'status': 'CANDIDATES_FOUND' if candidates else
                   'LIMITATIONS_ONLY' if limitations else 'NO_CANDIDATES',
     }
@@ -441,6 +482,8 @@ def dry_run_plan() -> dict[str, Any]:
         'max_observations': MAX_OBSERVATIONS,
         'max_adb_commands': MAX_ADB_COMMANDS,
         'max_candidates': MAX_CANDIDATES,
+        'search_roots': list(ROOTS),
+        'apex_search_scope': 'immediate APEX package lib64 directories only',
         'max_provider_file_bytes': MAX_PROVIDER_FILE_BYTES,
         'max_total_provider_bytes': MAX_TOTAL_PROVIDER_BYTES,
         'max_stdout_bytes': MAX_OUTPUT_BYTES,
@@ -601,7 +644,7 @@ def collect_provider(
         'methods': {
             'device_selection': 'fixed owner-authorized ADB serial; no adb devices scan',
             'connection': 'adb connect to the fixed serial, followed by selected-target get-state',
-            'library_discovery': 'fixed POSIX find/readlink probe over six P3-A library roots',
+            'library_discovery': 'five fixed lib64 roots plus immediate APEX package lib64 directories; exact camx_core.so paths checked before nested lib64 searches',
             'size_preflight': 'unprivileged wc -c for every candidate before any pull; 64 MiB/file and 128 MiB aggregate caps',
             'remote_sha256': 'unprivileged adb shell sha256sum before and after each pull',
             'transfer': 'adb pull into ephemeral local staging only',
@@ -610,6 +653,7 @@ def collect_provider(
         },
         'discovery_script_sha256': SCRIPT_SHA256,
         'root_status': {},
+        'discovery_scan_complete': False,
         'candidates': [],
         'candidate_sizes': [],
         'planned_provider_bytes': 0,
@@ -708,6 +752,7 @@ def collect_provider(
             raise RunnerStop('BLOCKED_UNEXPECTED_OUTPUT', str(exc)) from exc
 
         report['root_status'] = found['root_status']
+        report['discovery_scan_complete'] = found['scan_complete']
         report['candidates'] = found['candidates']
         report['candidate_limitations'] = found['candidate_limitations']
         report['discovery_status'] = found['status']
@@ -879,6 +924,7 @@ def _preflight_failure_report(code: str, target_serial: str | None = None) -> di
         },
         'discovery_script_sha256': SCRIPT_SHA256,
         'root_status': {},
+        'discovery_scan_complete': False,
         'candidates': [],
         'candidate_sizes': [],
         'planned_provider_bytes': 0,
