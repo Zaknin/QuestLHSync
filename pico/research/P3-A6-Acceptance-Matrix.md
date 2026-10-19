@@ -68,11 +68,11 @@
 | M2.8C-03 | Runtime process existence | `NOT EVALUABLE` | Process rows were not accepted by the host protocol parser |
 | M2.8C-04 | Runtime callback occurrence | `NOT EVALUABLE / UNKNOWN` | The exact callback diagnostic is useful in principle, but no record passed framing validation. This is not `NOT_OBSERVED` and not PASS |
 | M2.8C-05 | CRM event ID 0/2 and `timestampType`/`bNotify` | `UNKNOWN` | The static log string has a Qtimer label but no CRM event ID or `bNotify`; runtime values were not obtained |
-| M2.8C-06 | Request/frame correlation | `STATIC FIELDS ONLY; RUNTIME UNKNOWN` | The diagnostic format names request ID and frame count; it does not join CRM/CSL/pipeline/PVR IDs or `FrameMetaDate` |
+| M2.8C-06 | Request/frame correlation | `STATIC FIELD FLOW VERIFIED; RUNTIME UNKNOWN` | Provider binary copies CRM `frame_id` to `CSLMessage+0x10`; QuickCamera argument setup passes `+0x10` to the format's `frameCount` placeholder. The earlier `+0x20` reading was an argument-order error: `+0x20` supplies `linkhdl`. This does not establish a runtime event or join pipeline/PVR IDs or `FrameMetaDate` |
 | M2.8C-07 | Timestamp units and clock domain | `UNKNOWN` | Qtimer is a source label, not units, epoch, exact kernel clock contract, or physical SOF proof. The format's `monoTimestamp` reloads the same request-indexed ring slot on the direct path |
 | M2.8C-08 | 38-slot fallback occurrence | `STATIC CAPABILITY / RUNTIME UNKNOWN` | No dedicated fallback log marker was found; no accepted event record exists |
 | M2.8C-09 | M2.8C private evidence publication | `PASS — CORRECTED CANONICAL READ-BACK` | Corrected package has manifest-only ZIP, byte-identical embedded/external manifest, sidecar entries matching independent ZIP/manifest hashes, and sidecar-last. First committed diagnostic package is preserved and marked as a publisher receipt/manifest-shape error |
-| M2.8C-10 | Offline regression after documentation and probe fixtures | `PASS` | Python 249/249; M1 PowerShell 29/29; M2 PowerShell 410 assertions; M1, M2.7B and M2.8B WSL integrations PASS; one-off M2.8C WSL `/bin/sh` synthetic output checks PASS. No result implies hardware PASS |
+| M2.8C-10 | Offline regression after documentation and probe fixtures | `PASS — RECONSTRUCTED TESTS` | Current M2.8C-R tests and all inherited Python, PowerShell and WSL suites are recorded in the M2.8C report/handover. Original M2.8C parser/probe/tests were not recovered; no result implies hardware PASS |
 
 ## Будущие runtime acceptance
 

@@ -213,6 +213,26 @@ Offline static analysis of a temporary hash-verified copy establishes provider b
 
 Final M2.7B status: **PACKAGE_READY; offline provider static analysis complete**. Final offline verification: Python **234/234**, M1 PowerShell **29/29**, M2 PowerShell **410 assertions**, M1 and M2.7B WSL POSIX integrations **PASS**, `py_compile` **PASS**, dry-run **DRY_RUN_ONLY**, and `git diff --check` **PASS**. `exact_time`, `mapping_verified`, `pose_verified`, `shared_buffer_identity_verified`, `frame_meta_bridge_verified`, `physical_event_verified` and `live_lighthouse_correction_allowed` remain `false`.
 
+## M2.8C-R — offline logcat framing recovery (2026-10-19)
+
+The M2.8C published baseline had documents but not its Python collector/parser, fixed POSIX probe, synthetic tests, or WSL integration fixture. A targeted local repo/temp search did not find those sources. The M2.8C-R files are reconstructed from the documented interface and are explicitly not byte-identical to the lost probe. The original raw 3,540-byte response was not saved; therefore the initial `BLOCKED_OUTPUT_FRAMING` subcause stays `UNKNOWN` and the historical result is unchanged.
+
+Added offline-only reconstructed artifacts:
+
+- `pico/tools/p3a_m28c_logcat.py`: strict protocol parser and exact inspectable argv; no ADB executor.
+- `pico/tools/p3a_m28c_logcat_probe.sh`: fixed `ps -A -o PID,NAME` and `logcat -b main -d -v threadtime -t 256` probe, bounded to 16 process candidates, 40 normalized records and 64 KiB.
+- `pico/tests/test_p3a_m28c_logcat.py` and `pico/tests/p3a_m28c_posix_integration.tests.ps1`: parser and real local WSL `/bin/sh`/`awk` integration fixtures.
+
+Host failures return one of `OUTPUT_LINE_LIMIT`, `INVALID_CONTROL_CHARACTER`, `INVALID_LINE_ENDING`, `MALFORMED_PROTOCOL_RECORD`, `MISSING_PROTOCOL_TERMINATOR`, `OUTPUT_TRUNCATED`, `REMOTE_FILTER_UNVERIFIED`, `LOGCAT_UNSUPPORTED_OPTION`, or `REMOTE_COMMAND_FAILURE` with safe counts and optional line/offset only. The reconstructed remote probe buffers and allowlists output, discarding event rows when logcat fails. Stderr remains separate from stdout; the parser returns only a safe code for stderr failures. Synthetic tests include CRLF and invalid framing, 3,540-byte input, raw-record injection, overlong lines, exact 40/41 limits, separate stderr, nonzero status, unsupported options, and AWK/process errors.
+
+Static QuickCamera argument analysis corrected an earlier M2.8C report statement. At `0x376b4`, x9/x10 load message `+0x08/+0x10`; later stack setup passes the `+0x10` value as the `frameCount` format argument. The `+0x20` load at `0x376d8` is passed as `linkhdl`. The acquired provider's recorded static flow copies CRM `frame_id` to message `+0x10`, so these fields have a static dataflow relation. This does not imply runtime callback occurrence, pipeline/PVR ID equality, or `FrameMetaDate` identity. `monoTimestamp` reloads the same request-ID modulo-38 ring slot as the timestamp on the direct log path; it is not an independent Android monotonic measurement. The log requires message type 0, timestamp type 0, and existing INFO gates; `bNotify` is read after the log call.
+
+WSL verifies this reconstructed source against local POSIX shell/awk only. Android 10 Toybox `awk`, `logcat` option behavior, and exact ADB remote shell quoting remain unverified. No Android incompatibility was proven offline, and no ADB/Pico/logcat run occurred in M2.8C-R. The next technically useful experiment is one fresh bounded default-log snapshot only after those compatibility points are resolved and separately authorized; success could establish a callback-specific log record with logged request/frame/timestamp fields, but cannot establish CRM event ID, timestamp clock domain/units, runtime provider identity, fallback, physical SOF/exposure, PVR metadata join, or Lighthouse suitability.
+
+The historical M2.8C hardware outcome and canonical packages remain unchanged. All timing, mapping, pose, shared-buffer, frame-meta, physical-event and Lighthouse gates remain `false`.
+
+M2.8C-R final offline checks: Python **265/265 PASS** including **16/16** new parser/argv tests; M1 PowerShell **29/29 PASS**; M2 PowerShell **410 assertions PASS**; M1, M2.7B, M2.8B and M2.8C WSL POSIX integrations **PASS**; `git diff --check` **PASS**. The M2.8C probe and parser are reconstructed files, not original source recovery; there was no ADB or hardware activity.
+
 ## M2.8A — Runtime provenance preparation (2026-10-19)
 
 Offline review re-read the already acquired provider from the canonical private ZIP and the pinned QuickCamera ELF. Provider identity remains `/vendor/lib64/camx_core.so`, size 8,664,624, SHA-256 `7502d93342e5efe4d96a53c08ca7dfc7778d0ca5c728a9a0905be2611c0f1a77`, Build ID `c83b58a36b8273c0a458bc26c28f5af4`. QuickCamera is 332,368 bytes, SHA-256 `fb22355acd35b9772a5538a7d1c49175641165ad0368e7c47e5831f5f1727017`, Build ID `5deb124dd763e9ebee78d01e4105d1f8`.
