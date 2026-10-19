@@ -25,18 +25,21 @@ function Assert-StandardRunArgumentVectors([System.Collections.Generic.List[obje
     }
     Assert-CallVector $Calls 0 $stateVector 'get-state vector must match exactly'
     Assert-CallVector $Calls 1 ([string[]]($prefix + @('getprop', 'ro.product.model'))) 'product model vector must match exactly'
-    Assert-CallVector $Calls 2 ([string[]]($prefix + @('getprop', 'ro.build.fingerprint'))) 'build fingerprint vector must match exactly'
-    Assert-CallVector $Calls 3 ([string[]]($prefix + @('getprop', 'ro.build.version.release'))) 'Android release vector must match exactly'
-    Assert-CallVector $Calls 4 ([string[]]($prefix + @('uname', '-r'))) 'kernel release vector must match exactly'
+    Assert-CallVector $Calls 2 ([string[]]($prefix + @('getprop', 'ro.product.device'))) 'product device vector must match exactly'
+    Assert-CallVector $Calls 3 ([string[]]($prefix + @('getprop', 'ro.product.name'))) 'product name vector must match exactly'
+    Assert-CallVector $Calls 4 ([string[]]($prefix + @('getprop', 'ro.product.manufacturer'))) 'product manufacturer vector must match exactly'
+    Assert-CallVector $Calls 5 ([string[]]($prefix + @('getprop', 'ro.build.fingerprint'))) 'build fingerprint vector must match exactly'
+    Assert-CallVector $Calls 6 ([string[]]($prefix + @('getprop', 'ro.build.version.release'))) 'Android release vector must match exactly'
+    Assert-CallVector $Calls 7 ([string[]]($prefix + @('uname', '-r'))) 'kernel release vector must match exactly'
 
     $module = Get-Module -Name 'P3A6Inventory'
-    $processScript = & $module { param($budget) Get-P3A6ProcessProbeScript -ProcessBudget $budget } 195
+    $processScript = & $module { param($budget) Get-P3A6ProcessProbeScript -ProcessBudget $budget } 192
     $quotedProcessScript = & $module { param($probe) ConvertTo-P3A6PosixShellArgument -Value $probe } $processScript
-    Assert-CallVector $Calls 5 ([string[]]($prefix + @('sh', '-c', $quotedProcessScript))) 'process probe vector must match the generated allowlisted command exactly'
+    Assert-CallVector $Calls 8 ([string[]]($prefix + @('sh', '-c', $quotedProcessScript))) 'process probe vector must match the generated allowlisted command exactly'
 
-    $fdScript = & $module { param($processId, $budget) Get-P3A6ProbeScript -ProcessId $processId -RecordBudget $budget } 123 194
+    $fdScript = & $module { param($processId, $budget) Get-P3A6ProbeScript -ProcessId $processId -RecordBudget $budget } 123 191
     $quotedFdScript = & $module { param($probe) ConvertTo-P3A6PosixShellArgument -Value $probe } $fdScript
-    Assert-CallVector $Calls 6 ([string[]]($prefix + @('sh', '-c', $quotedFdScript))) 'FD probe vector must match the generated allowlisted command exactly'
+    Assert-CallVector $Calls 9 ([string[]]($prefix + @('sh', '-c', $quotedFdScript))) 'FD probe vector must match the generated allowlisted command exactly'
 }
 
 function New-Approval([string[]]$Actions = @('read-only-inventory'), [string]$Device = 'Pico 4 Pro', [bool]$Expired = $false, [int]$ExpiresSeconds = 3600) {
@@ -81,6 +84,9 @@ function Get-TestCommandKind([string[]]$Arguments) {
         if ($Arguments[$offset + 1] -ceq 'getprop') {
             switch -CaseSensitive ($Arguments[$offset + 2]) {
                 'ro.product.model' { return 'PRODUCT_MODEL' }
+                'ro.product.device' { return 'PRODUCT_DEVICE' }
+                'ro.product.name' { return 'PRODUCT_NAME' }
+                'ro.product.manufacturer' { return 'PRODUCT_MANUFACTURER' }
                 'ro.build.fingerprint' { return 'BUILD_FINGERPRINT' }
                 'ro.build.version.release' { return 'ANDROID_RELEASE' }
             }
@@ -110,7 +116,10 @@ function Get-StandardResponder {
         param([string[]]$Arguments, [int]$TimeoutMs)
         switch -CaseSensitive (Get-TestCommandKind -Arguments $Arguments) {
             'GET_STATE' { return New-Response -Stdout "device`n" }
-            'PRODUCT_MODEL' { return New-Response -Stdout "Pico 4 Pro`n" }
+            'PRODUCT_MODEL' { return New-Response -Stdout "A8110`n" }
+            'PRODUCT_DEVICE' { return New-Response -Stdout "PICOA8110`n" }
+            'PRODUCT_NAME' { return New-Response -Stdout "Phoenix_ovs`n" }
+            'PRODUCT_MANUFACTURER' { return New-Response -Stdout "Pico`n" }
             'BUILD_FINGERPRINT' { return New-Response -Stdout "pico/pico/pico:10/ABC123/456:user/release-keys`n" }
             'ANDROID_RELEASE' { return New-Response -Stdout "10`n" }
             'KERNEL_RELEASE' { return New-Response -Stdout "4.14.190-pico`n" }
@@ -246,18 +255,120 @@ $failedEvidence = Read-EvidenceText $case.Result | ConvertFrom-Json -AsHashtable
 Assert-True ($failedEvidence.collection_status -eq 'BLOCKED' -and $failedEvidence.fields.build_fingerprint.status -eq 'NOT_OBSERVED') 'ADB failure must not become an empty successful collection'
 $passCount++
 
-# An unexpected physical model is discarded, and collection stops before build/process queries.
-$unexpectedModel = {
+# The owner's exact observed tuple is retained with per-property provenance, while
+# the Phoenix-family software identity stays distinct from Pro hardware attestation.
+$exactTupleResponder = {
     param([string[]]$Arguments, [int]$TimeoutMs)
-    $kind = Get-TestCommandKind -Arguments $Arguments
-    if ($kind -eq 'GET_STATE') { return New-Response -Stdout "device`n" }
-    if ($kind -eq 'PRODUCT_MODEL') { return New-Response -Stdout "Unexpected Headset`n" }
-    throw 'collector continued after unexpected device identity'
+    $response = & (Get-StandardResponder) $Arguments $TimeoutMs
+    if ((Get-TestCommandKind -Arguments $Arguments) -eq 'PROCESS_PROBE') { $response.Stdout = "123 com.picovr.quickcamera`nP3A6`tPROCESS_STATUS`tOBSERVED`n" }
+    return $response
 }.GetNewClosure()
-$case = Invoke-TestRun $unexpectedModel (New-Approval) $confirmation
-Assert-True ($case.Result.status -eq 'BLOCKED_UNEXPECTED_DEVICE') 'unexpected model must be rejected'
-Assert-True ($case.Calls.Count -eq 2) 'unexpected model must stop after identity check'
-Assert-True ((Read-EvidenceText $case.Result) -notmatch 'Unexpected Headset|SERIAL-PRIVATE') 'unexpected identity and serial must not be persisted'
+$case = Invoke-TestRun $exactTupleResponder (New-Approval) $confirmation
+$tupleEvidence = Read-EvidenceText $case.Result | ConvertFrom-Json -AsHashtable
+Assert-True ($case.Result.status -eq 'COMPLETE') "the exact observed A8110 property tuple must be accepted (status=$($case.Result.status), calls=$($case.Result.adb_command_count), records=$($case.Result.record_count))"
+Assert-True ($tupleEvidence.fields.product_model.value -ceq 'A8110' -and $tupleEvidence.fields.product_device.value -ceq 'PICOA8110' -and $tupleEvidence.fields.product_name.value -ceq 'Phoenix_ovs' -and $tupleEvidence.fields.product_manufacturer.value -ceq 'Pico') 'all four actual Android properties must be retained'
+foreach ($fieldName in @('product_model', 'product_device', 'product_name', 'product_manufacturer')) {
+    Assert-True ($tupleEvidence.fields[$fieldName].status -eq 'OBSERVED' -and $tupleEvidence.fields[$fieldName].method -match 'getprop' -and $tupleEvidence.fields[$fieldName].observed_at_utc -and $tupleEvidence.fields[$fieldName].build_identity -eq $tupleEvidence.target.build_fingerprint) "identity field $fieldName must have provenance, time and build identity"
+}
+Assert-True ($tupleEvidence.identity.owner_declared_target -eq 'Pico 4 Pro' -and $tupleEvidence.identity.android_property_tuple_status -eq 'VERIFIED' -and $tupleEvidence.identity.phoenix_family_status -eq 'VERIFIED') 'exact tuple must verify only the owner-bound Phoenix-family software identity'
+Assert-True ($tupleEvidence.identity.pico_4_pro_hardware_variant_status -eq 'NOT_VERIFIED' -and $tupleEvidence.identity.cryptographic_attestation -eq $false) 'Android properties must not be represented as Pro hardware attestation'
+Assert-True ($tupleEvidence.collector.version -eq 'P3-A6-M1.4-v1' -and $tupleEvidence.collector.source_sha256.module -match '^[0-9a-f]{64}$') 'identity evidence must identify the collector revision and module digest'
+Assert-StandardRunArgumentVectors $case.Calls
+$passCount++
+
+# A8110 alone, or any wrong member of the exact tuple, fails closed before build/process inventory.
+$tupleMismatches = @(
+    @{ kind = 'PRODUCT_MODEL'; field = 'product_model'; value = 'Unexpected Headset' },
+    @{ kind = 'PRODUCT_DEVICE'; field = 'product_device'; value = 'PICOA8100' },
+    @{ kind = 'PRODUCT_DEVICE'; field = 'product_device'; value = 'PICOA81-other' },
+    @{ kind = 'PRODUCT_NAME'; field = 'product_name'; value = 'Phoenix_other' },
+    @{ kind = 'PRODUCT_MANUFACTURER'; field = 'product_manufacturer'; value = 'OtherBrand' },
+    @{ kind = 'PRODUCT_MANUFACTURER'; field = 'product_manufacturer'; value = 'pico' }
+)
+foreach ($variant in $tupleMismatches) {
+    $mismatchResponder = {
+        param([string[]]$Arguments, [int]$TimeoutMs)
+        $kind = Get-TestCommandKind -Arguments $Arguments
+        if ($kind -eq $variant.kind) { return New-Response -Stdout ($variant.value + "`n") }
+        return & (Get-StandardResponder) $Arguments $TimeoutMs
+    }.GetNewClosure()
+    $case = Invoke-TestRun $mismatchResponder (New-Approval) $confirmation
+    $mismatchEvidence = Read-EvidenceText $case.Result | ConvertFrom-Json -AsHashtable
+    Assert-True ($case.Result.status -eq 'BLOCKED_UNEXPECTED_DEVICE' -and $mismatchEvidence.collection_status -eq 'BLOCKED') "mismatched $($variant.field) must block the run"
+    Assert-True ($mismatchEvidence.fields[$variant.field].status -eq 'OBSERVED' -and $mismatchEvidence.fields[$variant.field].value -ceq $variant.value) "allowlisted mismatched $($variant.field) must be retained as observed evidence"
+    if ($variant.field -ne 'product_model') { Assert-True ($mismatchEvidence.fields.product_model.value -ceq 'A8110') 'A8110 by itself must not accept a mismatched device/name/manufacturer tuple' }
+    Assert-True ($mismatchEvidence.identity.android_property_tuple_status -eq 'MISMATCH' -and $mismatchEvidence.identity.phoenix_family_status -eq 'UNVERIFIED') 'partial or mismatched tuple must not verify the Phoenix family'
+    Assert-True ($case.Calls.Count -eq 5) 'all four identity properties may be read, but no build or process probe may follow a mismatch'
+}
+$passCount++
+
+# Missing identity properties block at the missing field and leave later fields NOT_OBSERVED.
+$identityFieldKinds = @(
+    @{ kind = 'PRODUCT_MODEL'; field = 'product_model' },
+    @{ kind = 'PRODUCT_DEVICE'; field = 'product_device' },
+    @{ kind = 'PRODUCT_NAME'; field = 'product_name' },
+    @{ kind = 'PRODUCT_MANUFACTURER'; field = 'product_manufacturer' }
+)
+for ($missingIndex = 0; $missingIndex -lt $identityFieldKinds.Count; $missingIndex++) {
+    $missingSpec = $identityFieldKinds[$missingIndex]
+    $missingResponder = {
+        param([string[]]$Arguments, [int]$TimeoutMs)
+        if ((Get-TestCommandKind -Arguments $Arguments) -eq $missingSpec.kind) { return New-Response -Stdout '' }
+        return & (Get-StandardResponder) $Arguments $TimeoutMs
+    }.GetNewClosure()
+    $case = Invoke-TestRun $missingResponder (New-Approval) $confirmation
+    $missingEvidence = Read-EvidenceText $case.Result | ConvertFrom-Json -AsHashtable
+    Assert-True ($case.Result.status -eq 'BLOCKED_INVALID_DEVICE_IDENTITY') "missing $($missingSpec.field) must block identity validation"
+    Assert-True ($missingEvidence.fields[$missingSpec.field].status -eq 'UNAVAILABLE' -and $missingEvidence.fields[$missingSpec.field].reason -eq 'EMPTY_IDENTITY_PROPERTY') "missing $($missingSpec.field) must be explicitly unavailable"
+    Assert-True ($missingEvidence.identity.android_property_tuple_status -eq 'INCOMPLETE' -and $missingEvidence.identity.phoenix_family_status -eq 'UNVERIFIED') 'missing tuple member must not pass family identity'
+    Assert-True ($case.Calls.Count -eq (2 + $missingIndex)) 'collection must stop on the first missing tuple member'
+    for ($laterIndex = $missingIndex + 1; $laterIndex -lt $identityFieldKinds.Count; $laterIndex++) {
+        $laterField = $identityFieldKinds[$laterIndex].field
+        Assert-True ($missingEvidence.fields[$laterField].status -eq 'NOT_OBSERVED') "later field $laterField must remain NOT_OBSERVED after missing $($missingSpec.field)"
+    }
+}
+$passCount++
+
+# Multiline identity output is rejected without preserving its raw contents or continuing collection.
+for ($multiIndex = 0; $multiIndex -lt $identityFieldKinds.Count; $multiIndex++) {
+    $multiSpec = $identityFieldKinds[$multiIndex]
+    $multiResponder = {
+        param([string[]]$Arguments, [int]$TimeoutMs)
+        if ((Get-TestCommandKind -Arguments $Arguments) -eq $multiSpec.kind) { return New-Response -Stdout "A8110`nPICOA8110`n" }
+        return & (Get-StandardResponder) $Arguments $TimeoutMs
+    }.GetNewClosure()
+    $case = Invoke-TestRun $multiResponder (New-Approval) $confirmation
+    $multiEvidence = Read-EvidenceText $case.Result | ConvertFrom-Json -AsHashtable
+    Assert-True ($case.Result.status -eq 'BLOCKED_INVALID_DEVICE_IDENTITY') "multiline $($multiSpec.field) must block identity validation"
+    Assert-True ($multiEvidence.fields[$multiSpec.field].status -eq 'UNAVAILABLE' -and $multiEvidence.fields[$multiSpec.field].value -eq $null -and $multiEvidence.fields[$multiSpec.field].reason -eq 'UNEXPECTED_MULTILINE_VALUE' -and $multiEvidence.identity.phoenix_family_status -eq 'UNVERIFIED') "multiline $($multiSpec.field) must have an explicit safe reason and no raw value"
+    Assert-True ($case.Calls.Count -eq (2 + $multiIndex)) 'no later identity, build or process query may run after multiline output'
+}
+$passCount++
+
+# A single-line value outside the bounded character allowlist is discarded and blocks collection.
+$malformedIdentityResponder = {
+    param([string[]]$Arguments, [int]$TimeoutMs)
+    if ((Get-TestCommandKind -Arguments $Arguments) -eq 'PRODUCT_DEVICE') { return New-Response -Stdout "PICOA8110;adb root`n" }
+    return & (Get-StandardResponder) $Arguments $TimeoutMs
+}.GetNewClosure()
+$case = Invoke-TestRun $malformedIdentityResponder (New-Approval) $confirmation
+$malformedIdentityEvidence = Read-EvidenceText $case.Result | ConvertFrom-Json -AsHashtable
+Assert-True ($case.Result.status -eq 'BLOCKED_INVALID_DEVICE_IDENTITY' -and $malformedIdentityEvidence.fields.product_device.status -eq 'UNAVAILABLE' -and $malformedIdentityEvidence.fields.product_device.reason -eq 'INVALID_IDENTITY_PROPERTY' -and $malformedIdentityEvidence.fields.product_device.value -eq $null) 'single-line malformed identity value must be discarded and block'
+Assert-True ($case.Calls.Count -eq 3) 'no further identity or inventory command may follow malformed identity value'
+$passCount++
+
+# An identity property ADB failure stops immediately and remains explicit, without raw stderr.
+$identityAdbFailure = {
+    param([string[]]$Arguments, [int]$TimeoutMs)
+    if ((Get-TestCommandKind -Arguments $Arguments) -eq 'PRODUCT_NAME') { return New-Response -ExitCode 1 -Stderr 'permission denied /private.user@example.invalid' }
+    return & (Get-StandardResponder) $Arguments $TimeoutMs
+}.GetNewClosure()
+$case = Invoke-TestRun $identityAdbFailure (New-Approval) $confirmation
+$identityFailureText = Read-EvidenceText $case.Result
+$identityFailureEvidence = $identityFailureText | ConvertFrom-Json -AsHashtable
+Assert-True ($case.Result.status -eq 'PARTIAL_ADB_ERROR' -and $identityFailureEvidence.fields.product_name.status -eq 'PERMISSION_DENIED' -and $identityFailureEvidence.identity.android_property_tuple_status -eq 'INCOMPLETE') 'identity command failure must remain partial and unverified'
+Assert-True ($case.Calls.Count -eq 4 -and $identityFailureEvidence.fields.product_manufacturer.status -eq 'NOT_OBSERVED') 'identity command failure must stop later calls and leave fields unobserved'
+Assert-True ($identityFailureText -notmatch 'permission denied|private.user@example') 'identity ADB stderr must not be persisted'
 $passCount++
 
 # Timeout retains explicitly partial results and must not mark unobserved fields as observed.
@@ -265,10 +376,9 @@ $timeoutResponder = {
     param([string[]]$Arguments, [int]$TimeoutMs)
     $kind = Get-TestCommandKind -Arguments $Arguments
     if ($kind -eq 'GET_STATE') { return New-Response -Stdout "device`n" }
-    if ($kind -eq 'PRODUCT_MODEL') { return New-Response -Stdout "Pico 4 Pro`n" }
     if ($kind -eq 'BUILD_FINGERPRINT') { return New-Response -Stdout "pico/pico/pico:10/ABC123/456:user/release-keys`n" }
     if ($kind -eq 'ANDROID_RELEASE') { return New-Response -TimedOut $true -Stdout 'partial output must be discarded' }
-    throw 'collector continued after timeout'
+    return & (Get-StandardResponder) $Arguments $TimeoutMs
 }.GetNewClosure()
 $case = Invoke-TestRun $timeoutResponder (New-Approval) $confirmation
 Assert-True ($case.Result.status -eq 'PARTIAL_TIMEOUT') 'timeout must produce partial status'
@@ -338,7 +448,17 @@ $rejectedNative = Invoke-P3A6NativeAdb -Arguments @('root') -TimeoutMs 1000
 Assert-True ($rejectedNative.Rejected -eq $true -and $rejectedNative.StartFailed -eq $true) 'native executor must reject adb root without starting a process'
 $module = Get-Module P3A6Inventory
 $allowedDevices = & $module { Test-P3A6AllowedAdbArguments -Arguments @('get-state') }
-$allowedProperty = & $module { Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'getprop', 'ro.build.fingerprint') }
+$allowedPropertyVectors = @(
+    @('shell', 'getprop', 'ro.product.model'),
+    @('-t', '42', 'shell', 'getprop', 'ro.product.device'),
+    @('shell', 'getprop', 'ro.product.name'),
+    @('-t', '42', 'shell', 'getprop', 'ro.product.manufacturer'),
+    @('-t', '42', 'shell', 'getprop', 'ro.build.fingerprint'),
+    @('shell', 'getprop', 'ro.build.version.release')
+)
+$allowedProperty = @($allowedPropertyVectors | Where-Object { & $module { param($vector) Test-P3A6AllowedAdbArguments -Arguments ([string[]]$vector) } $_ }).Count -eq $allowedPropertyVectors.Count
+$unlistedPropertyRejected = -not (& $module { Test-P3A6AllowedAdbArguments -Arguments @('shell', 'getprop', 'ro.serialno') })
+$caseVariantPropertyRejected = -not (& $module { Test-P3A6AllowedAdbArguments -Arguments @('shell', 'getprop', 'RO.PRODUCT.MODEL') })
 $processCommand = & $module { Get-P3A6ProcessProbeScript -ProcessBudget 191 }
 $quotedProcessCommand = & $module { param($text) ConvertTo-P3A6PosixShellArgument -Value $text } $processCommand
 $allowedProcess = & $module { param($text) Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'sh', '-c', $text) } $quotedProcessCommand
@@ -348,7 +468,7 @@ $quotedProbeScript = & $module { param($text) ConvertTo-P3A6PosixShellArgument -
 $allowedProbe = & $module { param($text) Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'sh', '-c', $text) } $quotedProbeScript
 $rawProbeRejected = -not (& $module { param($text) Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'sh', '-c', $text) } $probeScript)
 $rejectedShell = & $module { Test-P3A6AllowedAdbArguments -Arguments @('-t', '42', 'shell', 'sh', '-c', 'ps -A -o PID,NAME | awk -v max=1 bad; adb root') }
-Assert-True ($allowedDevices -and $allowedProperty -and $allowedProcess -and $allowedProbe -and $rawProcessRejected -and $rawProbeRejected -and -not $rejectedShell) 'native command allowlist must accept only exact POSIX-quoted inventory command shapes'
+Assert-True ($allowedDevices -and $allowedProperty -and $unlistedPropertyRejected -and $caseVariantPropertyRejected -and $allowedProcess -and $allowedProbe -and $rawProcessRejected -and $rawProbeRejected -and -not $rejectedShell) 'native command allowlist must accept only exact-case identity/property and POSIX-quoted inventory shapes'
 $passCount++
 
 # ADB resolution is pinned to the SDK under LOCALAPPDATA, regardless of other PATH copies.
@@ -441,4 +561,4 @@ foreach ($root in $script:CreatedOutputRoots) {
     if (Test-Path -LiteralPath $fullRoot) { [IO.Directory]::Delete($fullRoot, $true) }
 }
 
-Write-Output "P3-A6 M1 PowerShell mock collector checks: $passCount/20 PASS"
+Write-Output "P3-A6 M1 PowerShell mock collector checks: $passCount/25 PASS"

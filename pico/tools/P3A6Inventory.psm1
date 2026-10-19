@@ -179,7 +179,7 @@ function Test-P3A6AllowedAdbArguments {
     elseif ($Arguments.Count -gt 0 -and $Arguments[0] -ceq '-s') { return $false }
     if ($Arguments.Count -eq ($offset + 1) -and $Arguments[$offset] -ceq 'get-state') { return $true }
     if ($Arguments.Count -lt ($offset + 3) -or $Arguments[$offset] -cne 'shell') { return $false }
-    if ($Arguments.Count -eq ($offset + 3) -and $Arguments[$offset + 1] -ceq 'getprop' -and $Arguments[$offset + 2] -cin @('ro.product.model', 'ro.build.fingerprint', 'ro.build.version.release')) { return $true }
+    if ($Arguments.Count -eq ($offset + 3) -and $Arguments[$offset + 1] -ceq 'getprop' -and $Arguments[$offset + 2] -cin @('ro.product.model', 'ro.product.device', 'ro.product.name', 'ro.product.manufacturer', 'ro.build.fingerprint', 'ro.build.version.release')) { return $true }
     if ($Arguments.Count -eq ($offset + 3) -and $Arguments[$offset + 1] -ceq 'uname' -and $Arguments[$offset + 2] -ceq '-r') { return $true }
     if ($Arguments.Count -ne ($offset + 4) -or $Arguments[$offset + 1] -cne 'sh' -or $Arguments[$offset + 2] -cne '-c') { return $false }
 
@@ -545,7 +545,7 @@ function Write-P3A6EvidencePackage {
     $State.evidence.ended_at_utc = Get-P3A6UtcNow
     $State.evidence.elapsed_seconds = [Math]::Round(([DateTime]::UtcNow - $State.started_at).TotalSeconds, 3)
     if ($State.stop_code) {
-        $State.evidence.collection_status = if ($State.stop_code -like 'BLOCKED_*' -and $State.adb_command_count -le 2) { 'BLOCKED' } else { 'PARTIAL' }
+        $State.evidence.collection_status = if ($State.stop_code -like 'BLOCKED_*') { 'BLOCKED' } else { 'PARTIAL' }
         $State.evidence.stop_reason = $State.stop_code
     }
     elseif ($State.partial) {
@@ -647,6 +647,9 @@ function Invoke-P3A6Inventory {
     $started = [DateTime]::UtcNow
     $fields = [ordered]@{
         product_model = New-P3A6Field -Method 'adb [ -t <selected transport-id> ] shell getprop ro.product.model'
+        product_device = New-P3A6Field -Method 'adb [ -t <selected transport-id> ] shell getprop ro.product.device'
+        product_name = New-P3A6Field -Method 'adb [ -t <selected transport-id> ] shell getprop ro.product.name'
+        product_manufacturer = New-P3A6Field -Method 'adb [ -t <selected transport-id> ] shell getprop ro.product.manufacturer'
         build_fingerprint = New-P3A6Field -Method 'adb [ -t <selected transport-id> ] shell getprop ro.build.fingerprint'
         android_release = New-P3A6Field -Method 'adb [ -t <selected transport-id> ] shell getprop ro.build.version.release'
         kernel_release = New-P3A6Field -Method 'adb [ -t <selected transport-id> ] shell uname -r'
@@ -656,7 +659,7 @@ function Invoke-P3A6Inventory {
         schema = 'p3a6.private_inventory_evidence.v1'
         record_kind = 'p3a6_read_only_inventory'
         collector = [ordered]@{
-            version = 'P3-A6-M1-v1'
+            version = 'P3-A6-M1.4-v1'
             powershell_version = $PSVersionTable.PSVersion.ToString()
             source_sha256 = [ordered]@{
                 entry = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'collect_p3a6_inventory.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -668,7 +671,16 @@ function Invoke-P3A6Inventory {
         run_id = $runId
         approval_id = [string]$Approval.approval_id
         action = $script:P3A6Action
-        target = [ordered]@{ product = 'Pico 4 Pro'; build_fingerprint = $null; android_release = $null; kernel_release = $null }
+        target = [ordered]@{ product = 'Pico 4 Pro'; product_identity_basis = 'OWNER_DECLARED_TARGET'; build_fingerprint = $null; android_release = $null; kernel_release = $null }
+        identity = [ordered]@{
+            owner_declared_target = 'Pico 4 Pro'
+            android_property_tuple_status = 'NOT_OBSERVED'
+            phoenix_family_status = 'NOT_OBSERVED'
+            phoenix_family_method = 'Exact case-sensitive match of model, device, name and manufacturer properties'
+            pico_4_pro_hardware_variant_status = 'NOT_VERIFIED'
+            pico_4_pro_hardware_variant_reason = 'Android product properties do not uniquely attest the Pico 4 Pro hardware variant'
+            cryptographic_attestation = $false
+        }
         device_selection = [ordered]@{
             method = $(if ($TransportId) { 'adb -t <selected transport-id> get-state' } else { 'adb get-state; ambiguous transports are rejected by ADB' })
             serial_requested = $false
@@ -745,20 +757,54 @@ function Invoke-P3A6Inventory {
                 $state.stop_reason = 'ADB transport state was not exactly device'
             }
             else {
-                $modelCall = Invoke-P3A6DeviceCommand -State $state -Arguments ([string[]]($prefix + @('getprop', 'ro.product.model'))) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
-                $modelMethod = 'adb [ -t <selected transport-id> ] shell getprop ro.product.model'
-                if (-not $modelCall.ok) {
-                    $status = if ($modelCall.error_kind -eq 'PERMISSION_DENIED') { 'PERMISSION_DENIED' } else { 'UNAVAILABLE' }
-                    Set-P3A6FieldResult -State $state -Name 'product_model' -Status $status -Method $modelMethod -Reason $modelCall.error_kind
-                    $state.stop_code = if ($state.stop_code) { $state.stop_code } else { 'PARTIAL_ADB_ERROR' }
+                $identitySpecs = @(
+                    @{ name = 'product_model'; property = 'ro.product.model'; expected = 'A8110'; pattern = '^[A-Za-z0-9._ +()-]{1,128}$' },
+                    @{ name = 'product_device'; property = 'ro.product.device'; expected = 'PICOA8110'; pattern = '^[A-Za-z0-9._ +()-]{1,128}$' },
+                    @{ name = 'product_name'; property = 'ro.product.name'; expected = 'Phoenix_ovs'; pattern = '^[A-Za-z0-9._ +()-]{1,128}$' },
+                    @{ name = 'product_manufacturer'; property = 'ro.product.manufacturer'; expected = 'Pico'; pattern = '^[A-Za-z0-9._ +()-]{1,128}$' }
+                )
+                $identityValues = [ordered]@{}
+                foreach ($spec in $identitySpecs) {
+                    if ($state.stop_code) { break }
+                    $identityMethod = "adb [ -t <selected transport-id> ] shell getprop $($spec.property)"
+                    $result = Invoke-P3A6DeviceCommand -State $state -Arguments ([string[]]($prefix + @('getprop', $spec.property))) -AdbExecutor $AdbExecutor -Approval $Approval -OwnerConfirmation $OwnerConfirmation -Action $Action
+                    if (-not $result.ok) {
+                        $status = if ($result.error_kind -eq 'PERMISSION_DENIED') { 'PERMISSION_DENIED' } else { 'UNAVAILABLE' }
+                        Set-P3A6FieldResult -State $state -Name $spec.name -Status $status -Method $identityMethod -Reason $result.error_kind
+                        $state.evidence.identity.android_property_tuple_status = 'INCOMPLETE'
+                        $state.evidence.identity.phoenix_family_status = 'UNVERIFIED'
+                        if (-not $state.stop_code) { $state.stop_code = 'PARTIAL_ADB_ERROR' }
+                        break
+                    }
+                    $lines = @($result.stdout -split "`r?`n" | Where-Object { $_ -ne '' })
+                    if ($lines.Count -ne 1 -or $lines[0] -notmatch $spec.pattern) {
+                        $reason = if ($lines.Count -gt 1) { 'UNEXPECTED_MULTILINE_VALUE' } elseif ($lines.Count -eq 0) { 'EMPTY_IDENTITY_PROPERTY' } else { 'INVALID_IDENTITY_PROPERTY' }
+                        Set-P3A6FieldResult -State $state -Name $spec.name -Status 'UNAVAILABLE' -Method $identityMethod -Reason $reason
+                        $state.evidence.identity.android_property_tuple_status = 'INCOMPLETE'
+                        $state.evidence.identity.phoenix_family_status = 'UNVERIFIED'
+                        $state.stop_code = 'BLOCKED_INVALID_DEVICE_IDENTITY'
+                        $state.stop_reason = 'Allowlisted Android identity property was empty, malformed or multiline; raw output discarded'
+                        break
+                    }
+                    Set-P3A6FieldResult -State $state -Name $spec.name -Status 'OBSERVED' -Method $identityMethod -Value $lines[0]
+                    $identityValues[$spec.name] = $lines[0]
                 }
-                elseif ((($modelCall.stdout -split "`r?`n" | Where-Object { $_ -ne '' }) -join '') -ceq 'Pico 4 Pro') {
-                    Set-P3A6FieldResult -State $state -Name 'product_model' -Status 'OBSERVED' -Method $modelMethod -Value 'Pico 4 Pro'
-                }
-                else {
-                    Set-P3A6FieldResult -State $state -Name 'product_model' -Status 'UNAVAILABLE' -Method $modelMethod -Reason 'UNEXPECTED_DEVICE_MODEL'
-                    $state.stop_code = 'BLOCKED_UNEXPECTED_DEVICE'
-                    $state.stop_reason = 'Target model did not match Pico 4 Pro; returned value discarded'
+
+                if (-not $state.stop_code) {
+                    $tupleMatches = $true
+                    foreach ($spec in $identitySpecs) {
+                        if (-not $identityValues.Contains($spec.name) -or $identityValues[$spec.name] -cne $spec.expected) { $tupleMatches = $false }
+                    }
+                    if ($tupleMatches) {
+                        $state.evidence.identity.android_property_tuple_status = 'VERIFIED'
+                        $state.evidence.identity.phoenix_family_status = 'VERIFIED'
+                    }
+                    else {
+                        $state.evidence.identity.android_property_tuple_status = 'MISMATCH'
+                        $state.evidence.identity.phoenix_family_status = 'UNVERIFIED'
+                        $state.stop_code = 'BLOCKED_UNEXPECTED_DEVICE'
+                        $state.stop_reason = 'Observed Android product properties did not match the exact owner-bound identity tuple'
+                    }
                 }
 
                 if (-not $state.stop_code) {

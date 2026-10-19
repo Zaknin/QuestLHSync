@@ -29,7 +29,7 @@ Private incident archive was checked locally: its SHA-256 matched `final.marker.
 
 The no-transport reproduction confirmed the cause in PowerShell 7: assigning `if (...) { @('shell') }` to `$prefix` enumerates the single item into `System.String`; adding the property array then produces a malformed scalar argument instead of the three-item vector. `$prefix` and `$stateArgs` now use explicit `[string[]]` initialization and conditional reassignment. All four later prefix-plus-command constructions cast to `string[]`, including the metadata queries and process/FD shell probes.
 
-The PowerShell mock executor now invokes the actual `Test-P3A6AllowedAdbArguments` before any responder can return synthetic ADB output. Responders route only exact vector shapes; tests compare exact vectors for `get-state`, model, fingerprint, Android release, kernel release, and generated process/FD probes both without a transport and with `-t 42`. A vector rejected by the native allowlist cannot be satisfied by a permissive mock response.
+The PowerShell mock executor invokes the actual `Test-P3A6AllowedAdbArguments` before any responder can return synthetic ADB output. Responders route only exact vector shapes; tests compare exact vectors for `get-state`, all four identity properties, fingerprint, Android release, kernel release, and generated process/FD probes both without a transport and with `-t 42`. A vector rejected by the native allowlist cannot be satisfied by a permissive mock response.
 
 This is only an offline collector fix. It does not establish a successful device query or change any hardware gate. Offline readiness is `GO` for one separately authorized M1 retry; it is not a hardware `PASS`.
 
@@ -72,15 +72,15 @@ pwsh -NoProfile -File "C:\Dev\PicoLHSync\pico\tools\collect_p3a6_inventory.ps1" 
 
 Сценарий запросит интерактивную строку `P3-A6 APPROVE <approval_id> read-only-inventory`. Она снижает риск случайного запуска, но сама по себе не удостоверяет личность и не заменяет отдельную прямую инструкцию владельца. Gate повторно запускается **перед каждой ADB-командой**; проверяются scope, срок, лимит времени, количество команд и лимит записей.
 
-Коллектор не вызывает `adb devices` и не запрашивает serial. Сначала он выполняет только `adb get-state` (или `adb -t <id> get-state`, если явно указан `-TransportId`). Без выбранного transport неоднозначность нескольких устройств должна быть отклонена самим ADB; при nonzero результате collector классифицирует `more than one device` как `BLOCKED_MULTIPLE_DEVICES`, не записывает raw stderr и не запускает shell-команды. При выбранном transport точное состояние должно быть единственной строкой `device`. Transport ID используется только для вызовов текущего процесса и не сохраняется в evidence. Модель из `ro.product.model` — защитная проверка против ошибки выбора, а не криптографическая аттестация Pico; владелец должен заранее выбрать/подтвердить правильный ADB transport. Если локальная версия ADB не сообщает неоднозначность через `get-state`, это ограничение будет видно как blocked/error, а не как успешный пустой inventory.
+Коллектор не вызывает `adb devices` и не запрашивает serial. Сначала он выполняет только `adb get-state` (или `adb -t <id> get-state`, если явно указан `-TransportId`). Без выбранного transport неоднозначность нескольких устройств должна быть отклонена самим ADB; при nonzero результате collector классифицирует `more than one device` как `BLOCKED_MULTIPLE_DEVICES`, не записывает raw stderr и не запускает shell-команды. При выбранном transport точное состояние должно быть единственной строкой `device`. Transport ID используется только для вызовов текущего процесса и не сохраняется в evidence. Затем выполняются ровно четыре фиксированных identity `getprop` запроса. Принимается только точный owner-bound tuple `A8110 / PICOA8110 / Phoenix_ovs / Pico`; mismatch блокирует дальнейший inventory, а отсутствующее, malformed или multiline значение сохраняется только как статус/причина без raw output. Это проверка software-reported identity для выбора transport, не криптографическая аттестация и не доказательство конкретного аппаратного варианта. Если локальная версия ADB не сообщает неоднозначность через `get-state`, это ограничение будет видно как blocked/error, а не как успешный пустой inventory.
 
-Успешное завершение возвращает exit code `0`; partial — `5`; blocked/error — `4`. Timeout, ADB error, неоднозначный/unready transport, не Pico 4 Pro, permission denial, исчерпание лимита или unsupported output не превращаются в пустой `COMPLETE`.
+Успешное завершение возвращает exit code `0`; partial — `5`; blocked/error — `4`. Timeout, ADB error, неоднозначный/unready transport, mismatch exact Android property tuple, missing/malformed identity field, permission denial, исчерпание лимита или unsupported output не превращаются в пустой `COMPLETE`.
 
 ## Разрешённые наблюдения и методы
 
 | Поле | Метод | Сохранённые значения |
 |---|---|---|
-| Product check | `adb -t <transport> shell getprop ro.product.model` | Только нормализованное `Pico 4 Pro`; неожиданное значение отбрасывается и останавливает run |
+| Android identity tuple | Четыре фиксированных запроса `getprop` для model/device/name/manufacturer | Только одиночные значения в ограниченном ASCII allowlist с методом/UTC временем; mismatch блокирует сбор до build/process probes |
 | Build fingerprint | `adb -t <transport> shell getprop ro.build.fingerprint` | Строка, прошедшая строгую character/length allowlist |
 | Android release | `adb -t <transport> shell getprop ro.build.version.release` | Строка версии |
 | Kernel release | `adb -t <transport> shell uname -r` | Строка версии |
@@ -109,7 +109,7 @@ Native executor принимает только точные inventory command s
 - На Windows нужны PowerShell 7, Python с доступным из PATH модулем `pico.tools.p3a6_execution_gate_cli`, `adb.exe` по точному пути `$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe`, доступ к `LOCALAPPDATA` и возможность задать private DACL на новую run-папку. Другие ADB-копии в PATH не учитываются. Collector не запрашивает elevation; если pinned executable отсутствует или ACL создать нельзя, он блокирует запуск до ADB.
 - На Pico владелец должен заранее включить и авторизовать обычный USB debugging/ADB shell, выбрать правильное устройство и разрешить только действие `read-only-inventory`. Root, `su` и обход SELinux не нужны и не запрашиваются. Отказ в `/proc` или fdinfo останавливает сбор и сохраняется как partial evidence.
 - Первый вызов `adb.exe` может запустить стандартный host-side ADB server, если его ещё нет. Collector не устанавливает и не меняет Pico-службы; выполнение shell-команд начинается только после approval gate и проверки модели. Если запуск host ADB server сам по себе запрещён политикой владельца, ADB должен быть заранее поднят отдельно и этот режим отдельно одобрен.
-- Устройство должно вернуть `Pico 4 Pro` через `ro.product.model`; это проверка выбора, не криптографическая идентификация/attestation. При неоднозначном `adb get-state` collection завершается до shell-команд; collector не перечисляет serial для выбора устройства.
+- Устройство должно вернуть точный tuple `A8110 / PICOA8110 / Phoenix_ovs / Pico`; это owner-bound software identity check, а не уникальное доказательство Pico 4 Pro и не криптографическая attestation. Целевой аппарат `Pico 4 Pro` — заявление владельца; поле hardware variant остаётся `NOT_VERIFIED`. При неоднозначном `adb get-state` collection завершается до shell-команд; collector не перечисляет serial для выбора устройства.
 
 ## Private evidence package
 
@@ -120,7 +120,7 @@ Native executor принимает только точные inventory command s
 - `evidence.zip` с единственным `evidence.json`;
 - `final.marker.json`, созданный последним и содержащий SHA-256 архива.
 
-Evidence фиксирует schema/run/approval/action, UTC start/end, elapsed time, эффективные caps, per-field status/value/method/time/build identity, выбранные process/PID/video fd/fdinfo, access limitations, PowerShell/tool source SHA-256, count consistency и privacy flags. Пустые или не прочитанные поля остаются `NOT_OBSERVED`, `PERMISSION_DENIED` или `UNAVAILABLE`; raw stderr и необработанный ADB output не сохраняются. В evidence всегда остаются `false`:
+Evidence фиксирует schema/run/approval/action, UTC start/end, elapsed time, эффективные caps, per-field status/value/method/time/build identity, выбранные process/PID/video fd/fdinfo, access limitations, PowerShell/tool source SHA-256, count consistency и privacy flags. Четыре Android identity properties сохраняются как отдельные технические поля с их `getprop` методами, временем и build identity после её получения. Identity object содержит owner-declared target `Pico 4 Pro`, статус tuple и раздельные статусы Phoenix-family / Pico 4 Pro hardware variant. `Phoenix-family VERIFIED` означает только точный software-reported tuple; hardware variant остаётся `NOT_VERIFIED`, `cryptographic_attestation=false`. `A8110` и Android properties не являются уникальным или криптографическим доказательством варианта Pro. Пустые или не прочитанные поля остаются `NOT_OBSERVED`, `PERMISSION_DENIED` или `UNAVAILABLE`; raw stderr и malformed/multiline output не сохраняются. В evidence всегда остаются `false`:
 
 ```text
 exact_time=false
@@ -145,7 +145,8 @@ Private archive не предназначен для публикации в Git
 `python -m unittest pico.tests.test_p3a6_inventory_collector -v` запускает настоящий PowerShell collector с mock responses и проверяет:
 
 - отсутствующее/неверное/expired approval и expiry между командами;
-- action scope escape, wrong runtime model и несколько устройств;
+- action scope escape, mismatch каждого Android identity property и несколько устройств;
+- missing и multiline identity output для каждого из четырёх tuple fields, без сохранения raw values;
 - timeout/partial output, ADB error, duration/record limits;
 - `/proc`/fdinfo permission denial с прекращением последующих device commands, исчезнувший PID, ошибка `ps` и allowlisted fdinfo;
 - нулевой executor call для dry-run, запрет `adb root` и обязательное POSIX quoting native allowlist;
@@ -161,3 +162,13 @@ Private archive не предназначен для публикации в Git
 Результат проверки M1.2 (2026-10-18): `python -m unittest discover -s pico/tests -v` — **198/198 PASS**; targeted `python -m unittest pico.tests.test_p3a6_inventory_collector -v` — **2/2 PASS**; PowerShell mock harness — **19/19 PASS**; прямой WSL POSIX integration harness — **PASS**; `git diff --check` — **PASS**. PATH fixtures содержат только текстовые placeholders; запуск завершается до исполнения fixture. ADB client/executable, ADB server, Pico и camera/PVR pipeline не запускались.
 
 Результат проверки M1.3 (2026-10-18): `python -m unittest discover -s pico/tests -v` — **198/198 PASS**; PowerShell mock harness — **20/20 PASS**; прямой WSL POSIX integration harness — **PASS**; `git diff --check` — **PASS**. До исправления строгий mock harness падал на точном model vector без transport ID, потому что native allowlist отклонял его до responder. После исправления no-transport и `-t 42` vectors проходят тот же allowlist. Это synthetic/offline доказательство; аппаратная инвентаризация не повторялась.
+
+## P3-A6-M1.4 — owner-bound Phoenix-family identity tuple
+
+Владелец наблюдал `ro.product.model=A8110`, `ro.product.device=PICOA8110`, `ro.product.name=Phoenix_ovs`, `ro.product.manufacturer=Pico`. Native command allowlist добавляет ровно эти три фиксированных product keys. Collector требует точного case-sensitive совпадения всего tuple; `A8110` отдельно, `PICOA81*`, похожие names, другие manufacturer/device значения, пропущенные поля и multiline output не принимаются. Well-formed mismatch сохраняет ограниченные значения как observed field evidence и останавливается со статусом `BLOCKED_UNEXPECTED_DEVICE`. Missing/malformed member сохраняется как `UNAVAILABLE` + reason и останавливается со статусом `BLOCKED_INVALID_DEVICE_IDENTITY`; multiline/raw output не попадает в evidence. Все `BLOCKED_*` runs помечаются `collection_status=BLOCKED` независимо от количества уже выполненных read-only identity запросов.
+
+`phoenix_family_status=VERIFIED` значит только точное совпадение owner-bound Android property tuple. Approval target остаётся owner-declared `Pico 4 Pro`, но `pico_4_pro_hardware_variant_status=NOT_VERIFIED`, `cryptographic_attestation=false`: Android properties и `A8110` не устанавливают уникальность аппаратного варианта Pro. Per-field evidence включает точную property query, время и build identity (после чтения fingerprint). Execution gate, exact argument vectors, pinned SDK ADB, private storage, caps 60 seconds/200 records, POSIX protocol и все false safety gates сохранены.
+
+Проверки M1.4 исполняют точный tuple, неверные/prefix/case-variant значения, пустые, malformed и multiline ответы для каждого поля, identity-command error, metadata/provenance, разделение owner target и family/hardware statuses, все command vectors с transport/no-transport и действующий native allowlist до synthetic responder. Они являются offline-only и не создают hardware evidence.
+
+Результат offline проверки M1.4 (2026-10-19): `python -m unittest discover -s pico/tests -v` — **198/198 PASS**; PowerShell mock collector — **25/25 PASS**; прямой WSL POSIX integration — **PASS** (FD byte/parser, Android 10 argv join, `ps` framing/errors). Полный Python suite также выполнил collector и POSIX integration tests. ADB, ADB server и Pico не запускались; аппаратный статус, queue attribution и последующие runtime acceptance не изменялись.

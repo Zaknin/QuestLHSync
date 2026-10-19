@@ -115,7 +115,7 @@ On a real Pico 4 Pro, a read-only `PicoFrameReader --clock` run with 12 samples 
 
 ## Integration work: Pico 4 Pro streamed HMD
 
-The SteamVR network link now recognizes Pico 4 Pro firmware identity `A8110` (and explicit `PICO 4 Pro`/`Phoenix_ovs`) as **Pico 4 Pro**, distinct from Quest and Steam Frame. This is metadata recognition, not proof of a compatible pose transform. The Windows HMD model/tracking-system properties still need confirmation on the user's chosen streamer.
+The SteamVR network link recognizes the observed `A8110` / `Phoenix_ovs` metadata for this owner-declared Pico 4 Pro and distinguishes the Pico family from Quest and Steam Frame. `A8110` is not unique to the Pro hardware variant; Android-reported model metadata is not hardware attestation or proof of a compatible pose transform. The Windows HMD model/tracking-system properties still need confirmation on the user's chosen streamer.
 
 The Pico headset-side `hs_calibration` also has a deliberately opt-in, read-only transfer path: set `PICO_CALIB_PATH` to an absolute filename to send that JSON as the original QuestLHSync `C` record. Without the variable, Pico keeps emitting the P1 calibration error, unchanged. Files are limited to regular files of 2..131072 bytes, and symlinks are rejected. The source, Magisk ZIP, and Git repository contain **no real factory coefficients**.
 
@@ -140,9 +140,9 @@ OpenVR on Windows (PICO Connect wireless, Pico 4 Pro) reports:
 - `ModelNumber=PICO 4`, `RenderModelName=generic_hmd`, `ManufacturerName=Pico`
 - `RegisteredDeviceType=piconeo3/PICO 4`
 
-The headset's separate rooted Android API reports `ro.product.model=A8110`; the original P1 TCP hello reports `model=A8110`. This is the **same physical Pico 4 Pro**; PICO Connect obscures the Pro model in SteamVR.
+The headset's separate rooted Android API reports `ro.product.model=A8110`; the original P1 TCP hello reports `model=A8110`. The owner identifies this as the **same physical Pico 4 Pro**, while `A8110` alone does not uniquely identify the Pro variant; PICO Connect obscures the Pro model in SteamVR.
 
-Driver `QuestFamily()` now treats the generic OpenVR `PICO 4` as `Pico` family, but `Fits()` requires the network-side headset to specifically identify as `Pico 4 Pro` (A8110), not merely some other Pico headset. `StreamerName(pico)` resolves to `PICO Connect`.
+Driver `QuestFamily()` treats the generic OpenVR `PICO 4` as the `Pico` family. `Fits()` uses the available network-side product metadata; the `A8110` value is not a unique Pro identifier, so the owner-declared target must remain distinct from hardware-variant verification. `StreamerName(pico)` resolves to `PICO Connect`.
 
 **Safety: force observe-only** for Pico until the physical camera mapping, `HeadFromBody` and exposure time are validated. `driver_main.cpp` still records HMD and base station poses but never rewrites or hides lighthouse device poses on Pico, and gravity/relationship corrections are disabled. Existing non-Pico behavior is unchanged.
 

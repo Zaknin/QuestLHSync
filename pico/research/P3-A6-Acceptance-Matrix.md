@@ -1,6 +1,6 @@
 # P3-A6 — Acceptance Matrix
 
-Дата: 2026-10-18. Статусы ниже отделяют результат M0 (offline synthetic-only) от будущих runtime acceptance. На этом этапе нет экспериментальных данных; все hardware rows остаются `NOT RUN` или `BLOCKED`.
+Обновлено: 2026-10-19. M0/M1 preparation отделена от будущих runtime acceptance. Для M1.4 владелец предоставил Android property tuple как target software identity observation; этот turn не выполнял ADB/device action. Hardware acceptance rows остаются `NOT RUN`, `UNKNOWN` или `BLOCKED`.
 
 ## Offline preparation M0/M1
 
@@ -12,7 +12,7 @@
 | M0-04 | Clock affine fit, bracket width, calibrated ppm, wrap/reset rejection | `SYNTHETIC PASS` | Синтетический +100 ppm; без scale drift заблокирован. Никакого Pico clock result нет |
 | M0-05 | Hardware execution gate defaults closed, exact scope + time/count bounds | `SYNTHETIC PASS` | Tests validate gate contract; настоящего approval record/direct confirmation нет |
 | M0-06 | Device node, runtime queue contract, mapping identity, timestamp origin, frame delivery | `NOT RUN` | Pico и device interfaces не использовались |
-| M1-01 | PS7 inventory collector gate, device selection, read-only command allowlist, bounded/private partial evidence, POSIX probe protocol, Android 10 shell argv quoting, pinned local ADB executable resolution and exact native argument vectors | `MOCK + POSIX INTEGRATION PASS OFFLINE` | Full Python suite 198/198 PASS; 20 PowerShell mock scenarios. Native allowlist is invoked before synthetic responses; exact command vectors are checked with and without `-t 42`, including probes. Tests also retain two PATH ADB fixtures, exact `$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe` resolution/missing-path fail-closed, CLI dry-run, WSL `/bin/sh` FD/process probes, exact tab-byte/parser roundtrip, AOSP Android 10 argv-join emulation and `ps` status/header fixtures. ADB client/server and Pico не запускались; evidence не является experimental result |
+| M1-01 | PS7 inventory gate, exact ADB vectors, Phoenix-family identity tuple, bounded/private evidence, POSIX protocol/quoting and pinned local ADB path | `MOCK + POSIX INTEGRATION PASS OFFLINE` | Full Python suite 198/198 PASS; PowerShell harness 25/25 check groups. Native allowlist runs before synthetic responses; all four identity getprop vectors plus build/release/kernel/process/FD vectors are checked with and without `-t 42`. Exact tuple `A8110/PICOA8110/Phoenix_ovs/Pico` is retained with field provenance; wrong/prefix/missing/malformed/multiline members and identity-command errors fail closed. Evidence distinguishes `phoenix_family VERIFIED` from owner-declared Pico 4 Pro hardware variant `NOT_VERIFIED`. Existing pinned-path, dry-run, WSL `/bin/sh`, tab-byte/parser, Android 10 argv-join and `ps` framing checks remain. ADB client/server and Pico не запускались; synthetic result is not experimental PASS |
 
 ## Будущие runtime acceptance
 
@@ -46,4 +46,4 @@ physical_event_verified=false
 
 `SYNTHETIC PASS` не переводится в `STATIC PASS` или hardware `PASS`. Повышение runtime статуса допустимо только после review приватного evidence package по этой матрице и соответствующей отдельной approval scope.
 
-`MOCK + POSIX INTEGRATION PASS OFFLINE` подтверждает поведение collector на injected fixtures и POSIX shell parsing/quoting в WSL. Это не является ADB-to-device result и не повышает R1–R9. Открытый `/dev/videoN` fd без наблюдённого `ioctl(fd,0xc01856c0,...)` остаётся недостаточным для R1.
+`MOCK + POSIX INTEGRATION PASS OFFLINE` подтверждает поведение collector на injected fixtures и POSIX shell parsing/quoting в WSL. Exact Android property tuple подтверждает только owner-bound Phoenix-family software identity; он не является Pro hardware attestation и не доказывает подключение к Pico. Это не является ADB-to-device result и не повышает R1–R9. Открытый `/dev/videoN` fd без наблюдённого `ioctl(fd,0xc01856c0,...)` остаётся недостаточным для R1.
