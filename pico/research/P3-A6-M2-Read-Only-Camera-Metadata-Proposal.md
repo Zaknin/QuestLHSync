@@ -136,6 +136,8 @@ CameraService dump остаётся вне allowlist: даже если на к�
 
 `NOT_OBSERVED`, `UNAVAILABLE`, `PERMISSION_DENIED`, `LIMIT_REACHED` — самостоятельные outcomes; их нельзя превращать в пустой `PASS`. Не сохранять raw denial text, SELinux contexts целиком или непрофильные paths. Process names/PIDs и FD target metadata приватны и остаются только в отдельном approved process-FD action.
 
+**M2.3 evidence-schema correction:** private evidence is `p3a6.m2.node_inventory.v2`. Each parsed sysfs and `/dev` node retains the exact validated `videoN` as `node_id`; it is never reconstructed from array order or minor. Sysfs attributes distinguish `ATTRIBUTE_MISSING`, `PERMISSION_DENIED` and `INVALID` using fixed status codes and an empty failed-value field; malformed values are not retained. Cross-source major groups may be ambiguous; individual node correlation requires one unique exact `major:minor` tuple on each side. This remains node metadata correlation only and proves no process or ioctl ownership. The M2.2 hardware result remains `PARTIAL_LIMITATIONS`; see [`P3-A6-M2.3-Node-Identity-and-SOF-Provenance.md`](P3-A6-M2.3-Node-Identity-and-SOF-Provenance.md).
+
 ## Acceptance criteria implementation и future hardware
 
 1. Реализованный runner требует exact action `read-only-camera-node-metadata`, проверяет approval перед каждой командой, ограничивает run до 30 s/40 node observations/16 nodes per source и требует интерактивный lowercase `yes`.

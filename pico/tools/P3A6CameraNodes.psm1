@@ -27,16 +27,30 @@ count=0
 found=0
 has_observed=0
 has_denied=0
-field_status=UNAVAILABLE
+field_status=ATTRIBUTE_MISSING
 field_value=''
 if [ ! -d "$root" ]; then printf 'P3A6M2\tSYSFS_SOURCE\tUNAVAILABLE\n'; exit 0; fi
 if [ ! -r "$root" ]; then printf 'P3A6M2\tSYSFS_SOURCE\tPERMISSION_DENIED\n'; exit 0; fi
 read_field() {
   path=$1
   kind=$2
-  field_status=UNAVAILABLE
+  field_status=ATTRIBUTE_MISSING
   field_value=''
-  if [ ! -e "$path" ]; then field_status=UNAVAILABLE; return; fi
+  parent=${path%/*}
+  if [ ! -d "$parent" ] || [ ! -r "$parent" ] || [ ! -x "$parent" ]; then field_status=PERMISSION_DENIED; return; fi
+  case "$kind" in
+    name) set -- "$parent"/[n]ame ;;
+    index) set -- "$parent"/[i]ndex ;;
+    dev) set -- "$parent"/[d]ev ;;
+    *) field_status=INVALID; return ;;
+  esac
+  candidate=$1
+  if [ "$candidate" != "$parent/$kind" ]; then field_status=ATTRIBUTE_MISSING; return; fi
+  path=$candidate
+  if [ ! -e "$path" ]; then
+    if [ -L "$path" ]; then field_status=INVALID; else field_status=PERMISSION_DENIED; fi
+    return
+  fi
   if [ ! -r "$path" ]; then field_status=PERMISSION_DENIED; return; fi
   { exec 3<"$path"; } 2>/dev/null || { field_status=PERMISSION_DENIED; return; }
   IFS= read -r field_value <&3
@@ -46,21 +60,21 @@ read_field() {
   second_rc=$?
   exec 3<&-
   if { [ "$first_rc" -ne 0 ] && [ -z "$field_value" ]; } || [ "$second_rc" -eq 0 ] || [ -n "$extra" ]; then
-    field_status=UNAVAILABLE; field_value=''; return
+    field_status=INVALID; field_value=''; return
   fi
   case "$kind" in
     index)
-      case "$field_value" in ''|*[!0-9]*) field_status=UNAVAILABLE; field_value=''; return ;; esac
-      [ "${#field_value}" -le 10 ] || { field_status=UNAVAILABLE; field_value=''; return; }
+      case "$field_value" in ''|*[!0-9]*) field_status=INVALID; field_value=''; return ;; esac
+      [ "${#field_value}" -le 10 ] || { field_status=INVALID; field_value=''; return; }
       ;;
     dev)
-      case "$field_value" in *:*) left=${field_value%%:*}; right=${field_value#*:} ;; *) field_status=UNAVAILABLE; field_value=''; return ;; esac
-      case "$left$right" in ''|*[!0-9]*) field_status=UNAVAILABLE; field_value=''; return ;; esac
-      [ "${#left}" -le 10 ] && [ "${#right}" -le 10 ] || { field_status=UNAVAILABLE; field_value=''; return; }
+      case "$field_value" in *:*) left=${field_value%%:*}; right=${field_value#*:} ;; *) field_status=INVALID; field_value=''; return ;; esac
+      case "$left$right" in ''|*[!0-9]*) field_status=INVALID; field_value=''; return ;; esac
+      [ "${#left}" -le 10 ] && [ "${#right}" -le 10 ] || { field_status=INVALID; field_value=''; return; }
       ;;
     name)
-      [ "${#field_value}" -ge 1 ] && [ "${#field_value}" -le 96 ] || { field_status=UNAVAILABLE; field_value=''; return; }
-      case "$field_value" in *[!A-Za-z0-9_.:+\ -]*) field_status=UNAVAILABLE; field_value=''; return ;; esac
+      [ "${#field_value}" -ge 1 ] && [ "${#field_value}" -le 96 ] || { field_status=INVALID; field_value=''; return; }
+      case "$field_value" in *[!A-Za-z0-9_.:+\ -]*) field_status=INVALID; field_value=''; return ;; esac
       ;;
   esac
   field_status=OBSERVED
@@ -77,9 +91,9 @@ for entry in "$root"/video[0-9]*; do
     exit 0
   fi
   if [ ! -d "$entry" ]; then
-    printf 'P3A6M2\tSYSFS_NODE\tvideo%s\tname\tUNAVAILABLE\t\n' "$suffix"
-    printf 'P3A6M2\tSYSFS_NODE\tvideo%s\tindex\tUNAVAILABLE\t\n' "$suffix"
-    printf 'P3A6M2\tSYSFS_NODE\tvideo%s\tdev\tUNAVAILABLE\t\n' "$suffix"
+    printf 'P3A6M2\tSYSFS_NODE\tvideo%s\tname\tINVALID\t\n' "$suffix"
+    printf 'P3A6M2\tSYSFS_NODE\tvideo%s\tindex\tINVALID\t\n' "$suffix"
+    printf 'P3A6M2\tSYSFS_NODE\tvideo%s\tdev\tINVALID\t\n' "$suffix"
     continue
   fi
   read_field "$entry/name" name
@@ -194,6 +208,67 @@ function Get-P3A6M2TextSha256 {
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Text)
     $hash = [Security.Cryptography.SHA256]::HashData($bytes)
     return [Convert]::ToHexString($hash).ToLowerInvariant()
+}
+
+function Get-P3A6M2NodeCorrelations {
+    [CmdletBinding()]
+    param([AllowEmptyCollection()][object[]]$SysfsNodes=@(),[AllowEmptyCollection()][object[]]$DevNodes=@())
+    $majorMap=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    $deviceMap=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    $normalizeDecimal={
+        param([string]$Value)
+        $trimmed=$Value.TrimStart('0')
+        if ($trimmed.Length -eq 0) { return '0' }
+        return $trimmed
+    }
+    $ensureGroup={
+        param([Collections.Generic.Dictionary[string,object]]$Map,[string]$Key,[string]$Major)
+        if (-not $Map.ContainsKey($Key)) {
+            $Map[$Key]=[pscustomobject]@{major=$Major;sysfs_node_ids=[Collections.Generic.List[string]]::new();dev_node_ids=[Collections.Generic.List[string]]::new()}
+        }
+        return $Map[$Key]
+    }
+    foreach ($node in $SysfsNodes) {
+        if ([string]$node.node_id -cnotmatch '^video[0-9]{1,10}$' -or [string]$node.dev -cnotmatch '^([0-9]{1,10}):([0-9]{1,10})$') { continue }
+        $parts=([string]$node.dev).Split(':')
+        $major=& $normalizeDecimal $parts[0]; $minor=& $normalizeDecimal $parts[1]
+        $majorGroup=& $ensureGroup $majorMap $major $major
+        $majorGroup.sysfs_node_ids.Add([string]$node.node_id)
+        $tuple="$major`:$minor"
+        $deviceGroup=& $ensureGroup $deviceMap $tuple $major
+        $deviceGroup.sysfs_node_ids.Add([string]$node.node_id)
+    }
+    foreach ($node in $DevNodes) {
+        if ([string]$node.node_id -cnotmatch '^video[0-9]{1,10}$' -or [string]$node.status -cne 'OBSERVED' -or [string]$node.device_number -cnotmatch '^([0-9]{1,10}):([0-9]{1,10})$') { continue }
+        $parts=([string]$node.device_number).Split(':')
+        $major=& $normalizeDecimal $parts[0]; $minor=& $normalizeDecimal $parts[1]
+        $majorGroup=& $ensureGroup $majorMap $major $major
+        $majorGroup.dev_node_ids.Add([string]$node.node_id)
+        $tuple="$major`:$minor"
+        $deviceGroup=& $ensureGroup $deviceMap $tuple $major
+        $deviceGroup.dev_node_ids.Add([string]$node.node_id)
+    }
+    $majorGroups=[Collections.Generic.List[object]]::new()
+    foreach ($major in @($majorMap.Keys | Sort-Object -CaseSensitive)) {
+        $group=$majorMap[$major]
+        $status=if($group.sysfs_node_ids.Count -eq 0){'DEV_ONLY'}elseif($group.dev_node_ids.Count -eq 0){'SYSFS_ONLY'}elseif($group.sysfs_node_ids.Count -eq 1 -and $group.dev_node_ids.Count -eq 1){'UNIQUE_BY_MAJOR'}else{'AMBIGUOUS_BY_MAJOR'}
+        $majorGroups.Add([pscustomobject]@{major=$major;status=$status;sysfs_node_ids=@($group.sysfs_node_ids.ToArray());dev_node_ids=@($group.dev_node_ids.ToArray())})
+    }
+    $exactMatches=[Collections.Generic.List[object]]::new(); $ambiguousTuples=[Collections.Generic.List[object]]::new()
+    foreach ($tuple in @($deviceMap.Keys | Sort-Object -CaseSensitive)) {
+        $group=$deviceMap[$tuple]
+        if ($group.sysfs_node_ids.Count -eq 1 -and $group.dev_node_ids.Count -eq 1) {
+            $exactMatches.Add([pscustomobject]@{device_number=$tuple;major=$group.major;sysfs_node_id=$group.sysfs_node_ids[0];dev_node_id=$group.dev_node_ids[0]})
+        } elseif ($group.sysfs_node_ids.Count -gt 1 -or $group.dev_node_ids.Count -gt 1) {
+            $ambiguousTuples.Add([pscustomobject]@{device_number=$tuple;sysfs_node_ids=@($group.sysfs_node_ids.ToArray());dev_node_ids=@($group.dev_node_ids.ToArray())})
+        }
+    }
+    return [pscustomobject]@{
+        major_groups=@($majorGroups.ToArray())
+        exact_device_matches=@($exactMatches.ToArray())
+        ambiguous_device_tuples=@($ambiguousTuples.ToArray())
+        interpretation='Major groups are descriptive only; individual node matching requires a unique exact major:minor tuple. This does not establish process ownership, ioctl attribution, queue use or frame delivery.'
+    }
 }
 
 function ConvertTo-P3A6M2PosixArgument {
@@ -361,11 +436,11 @@ function ConvertFrom-P3A6M2ProbeOutput {
         if ($sourceCount -gt 0) { $result.reason='RECORD_AFTER_SOURCE_STATUS'; return [pscustomobject]$result }
         $fields = $line.Split([char]9)
         if ($Source -ceq 'sysfs' -and $fields.Count -eq 6 -and $fields[0] -ceq 'P3A6M2' -and $fields[1] -ceq 'SYSFS_NODE') {
-            if ($fields[2] -cnotmatch '^video[0-9]{1,10}$' -or $fields[3] -cnotin @('name','index','dev') -or $fields[4] -cnotin @('OBSERVED','UNAVAILABLE','PERMISSION_DENIED')) { $result.reason='SYSFS_RECORD'; return [pscustomobject]$result }
+            if ($fields[2] -cnotmatch '^video[0-9]{1,10}$' -or $fields[3] -cnotin @('name','index','dev') -or $fields[4] -cnotin @('OBSERVED','ATTRIBUTE_MISSING','PERMISSION_DENIED','INVALID')) { $result.reason='SYSFS_RECORD'; return [pscustomobject]$result }
             $field=$fields[3]; $value=$fields[5]; $node=$fields[2]
             if (-not $result.nodes.Contains($node)) {
                 if ($result.nodes.Count -ge $script:P3A6M2MaxNodesPerSource) { $result.reason='NODE_LIMIT'; return [pscustomobject]$result }
-                $result.nodes[$node]=[ordered]@{name=$null;index=$null;dev=$null;fields=[ordered]@{};metadata_fields_complete=$false}
+                $result.nodes[$node]=[ordered]@{node_id=$node;name=$null;index=$null;dev=$null;fields=[ordered]@{};metadata_fields_complete=$false}
             }
             if ($result.nodes[$node].fields.Contains($field)) { $result.reason='DUPLICATE_FIELD'; return [pscustomobject]$result }
             if ($fields[4] -ceq 'OBSERVED') {
@@ -386,7 +461,7 @@ function ConvertFrom-P3A6M2ProbeOutput {
             if ($fields[3] -ceq 'OBSERVED') {
                 if ($fields[4] -cne 'OK' -or $fields[5] -cnotmatch '^c[rwxstST-]{9}$' -or $fields[6] -cnotmatch '^[0-9]{1,10}$' -or $fields[7] -cnotmatch '^[0-9]{1,10}$' -or $fields[8] -cnotmatch '^[0-9]{1,10}:[0-9]{1,10}$') { $result.reason='DEV_VALUE'; return [pscustomobject]$result }
             } elseif (($fields[5..8] -join '') -cne '') { $result.reason='DEV_UNAVAILABLE_VALUE'; return [pscustomobject]$result }
-            $result.nodes[$fields[2]]=[ordered]@{status=$fields[3];reason=$fields[4];mode=$(if($fields[3] -ceq 'OBSERVED'){$fields[5]}else{$null});uid=$(if($fields[3] -ceq 'OBSERVED'){$fields[6]}else{$null});gid=$(if($fields[3] -ceq 'OBSERVED'){$fields[7]}else{$null});device_number=$(if($fields[3] -ceq 'OBSERVED'){$fields[8]}else{$null})}
+            $result.nodes[$fields[2]]=[ordered]@{node_id=$fields[2];status=$fields[3];reason=$fields[4];mode=$(if($fields[3] -ceq 'OBSERVED'){$fields[5]}else{$null});uid=$(if($fields[3] -ceq 'OBSERVED'){$fields[6]}else{$null});gid=$(if($fields[3] -ceq 'OBSERVED'){$fields[7]}else{$null});device_number=$(if($fields[3] -ceq 'OBSERVED'){$fields[8]}else{$null})}
             $nodeCount++
         } elseif ($fields.Count -eq 3 -and $fields[0] -ceq 'P3A6M2' -and $fields[1] -ceq $sourceRecordName -and $fields[2] -cnotin @('OBSERVED','NOT_OBSERVED','UNAVAILABLE','PERMISSION_DENIED','LIMIT_REACHED')) {
             $result.reason='SOURCE_STATUS'; return [pscustomobject]$result
@@ -506,14 +581,15 @@ function Invoke-P3A6M2Inventory {
         android_release=[ordered]@{status='NOT_OBSERVED';value=$null;method='adb shell getprop';observed_at_utc=$null;build_identity=$null;reason=$null}
     }
     $observation=[ordered]@{
-        schema='p3a6.m2.node_inventory.v1';run_id=[guid]::NewGuid().ToString('N');action=$Action;approval_id=[string]$Approval.approval_id;device='Pico 4 Pro'
-        collector_revision='P3-A6-M2-v2';started_at_utc=(Get-P3A6M2UtcNow);finished_at_utc=$null;elapsed_milliseconds=$null
+        schema='p3a6.m2.node_inventory.v2';run_id=[guid]::NewGuid().ToString('N');action=$Action;approval_id=[string]$Approval.approval_id;device='Pico 4 Pro'
+        collector_revision='P3-A6-M2-v3';started_at_utc=(Get-P3A6M2UtcNow);finished_at_utc=$null;elapsed_milliseconds=$null
         collection_status='PARTIAL';identity_status='NOT_OBSERVED';adb_command_count=0;observation_count=0
         device_state=[ordered]@{status='NOT_OBSERVED';value=$null;method='adb get-state';observed_at_utc=$null;reason=$null}
         software_identity=$identityEvidence;build=$buildEvidence
         kernel=[ordered]@{release=[ordered]@{status='NOT_OBSERVED';value=$null;method='adb shell uname -r';observed_at_utc=$null;build_identity=$null;reason=$null}}
         sources=[ordered]@{sysfs=[ordered]@{status='NOT_OBSERVED';method='fixed sysfs name/index/dev probe';script_sha256=$null;observed_at_utc=$null;build_identity=$null;normalized_line_ending_classification='NOT_OBSERVED';parsed_record_count=0;parser_error_code=$null;nodes=@()};dev=[ordered]@{status='NOT_OBSERVED';method='fixed /dev metadata probe; no node open';script_sha256=$null;observed_at_utc=$null;build_identity=$null;normalized_line_ending_classification='NOT_OBSERVED';parsed_record_count=0;parser_error_code=$null;nodes=@()}}
         parser_diagnostics=[ordered]@{failed_source=$null;normalized_line_ending_classification='NOT_OBSERVED';parsed_record_count=0;parser_error_code=$null}
+        node_correlations=[ordered]@{major_groups=@();exact_device_matches=@();ambiguous_device_tuples=@();interpretation='No cross-source node correlation computed yet.'}
         limits=[ordered]@{duration_seconds=$effectiveDuration;observations=$effectiveRecords;nodes_per_source=$script:P3A6M2MaxNodesPerSource}
         methods=@('ADB get-state','fixed getprop keys','uname -r','POSIX shell sysfs attributes','ls -ldn metadata on /dev candidates')
         source_hashes=[ordered]@{collector_module_sha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant();runner_sha256=(Get-FileHash -LiteralPath (Join-Path $script:P3A6M2RepoRoot 'pico/tools/collect_p3a6_camera_node_inventory.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()}
@@ -621,6 +697,7 @@ function Invoke-P3A6M2Inventory {
             $remainingBudget -= $nodes.Count
             if ($records -gt $effectiveRecords) { throw 'M2_RECORD_LIMIT' }
         }
+        $observation.node_correlations=Get-P3A6M2NodeCorrelations -SysfsNodes $observation.sources.sysfs.nodes -DevNodes $observation.sources.dev.nodes
         $allMetadataObserved=($observation.sources.sysfs.status -ceq 'OBSERVED' -and $observation.sources.dev.status -ceq 'OBSERVED')
         foreach ($node in $observation.sources.sysfs.nodes) { if (-not $node.metadata_fields_complete) { $allMetadataObserved=$false } }
         foreach ($node in $observation.sources.dev.nodes) { if ($node.status -cne 'OBSERVED') { $allMetadataObserved=$false } }
@@ -669,4 +746,4 @@ function Invoke-P3A6M2DryRun {
     [pscustomobject]@{status='DRY_RUN';collection_status='NOT_RUN';adb_command_count=0;observation_count=0;record_count=0;hardware_accessed=$false;safety_flags=$script:P3A6M2SafetyFlags}
 }
 
-Export-ModuleMember -Function Get-P3A6M2PinnedAdbPath,Get-P3A6M2ProbeScript,Get-P3A6M2TextSha256,ConvertTo-P3A6M2PosixArgument,Test-P3A6M2AllowedAdbArguments,Invoke-P3A6M2NativeAdb,Test-P3A6M2ApprovalPreflight,Resolve-P3A6M2Confirmation,ConvertFrom-P3A6M2ProbeOutput,Invoke-P3A6M2ConfirmedInventory,Invoke-P3A6M2DryRun
+Export-ModuleMember -Function Get-P3A6M2PinnedAdbPath,Get-P3A6M2ProbeScript,Get-P3A6M2TextSha256,Get-P3A6M2NodeCorrelations,ConvertTo-P3A6M2PosixArgument,Test-P3A6M2AllowedAdbArguments,Invoke-P3A6M2NativeAdb,Test-P3A6M2ApprovalPreflight,Resolve-P3A6M2Confirmation,ConvertFrom-P3A6M2ProbeOutput,Invoke-P3A6M2ConfirmedInventory,Invoke-P3A6M2DryRun

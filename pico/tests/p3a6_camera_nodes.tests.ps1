@@ -183,6 +183,10 @@ try {
     $androidLikeCrlf=$androidLikeOutput.Replace("`n","`r`n")
     $crlfParse=ConvertFrom-P3A6M2ProbeOutput -ProbeText $androidLikeCrlf -Source sysfs
     Assert-True ($crlfParse.valid -and $crlfParse.line_ending_classification -ceq 'CRLF' -and $crlfParse.record_count -eq 4 -and $crlfParse.nodes.video0.name -ceq 'PICO Camera 0') 'Android-like CRLF command output parses without relaxing fields'
+    Assert-Equal $crlfParse.nodes.video0.node_id 'video0' 'Sysfs parser preserves exact validated videoN identifier'
+    $legacyFieldStatus=$androidLikeOutput.Replace("video0`tname`tOBSERVED`tPICO Camera 0", "video0`tname`tUNAVAILABLE`t")
+    $legacyFieldStatusParse=ConvertFrom-P3A6M2ProbeOutput -ProbeText $legacyFieldStatus -Source sysfs
+    Assert-True (-not $legacyFieldStatusParse.valid -and $legacyFieldStatusParse.reason -ceq 'SYSFS_RECORD') 'Legacy generic sysfs field status is rejected by the bounded M2-v3 protocol'
     $mixedAndroidLike=$androidLikeOutput.Replace("video0`tname`tOBSERVED`tPICO Camera 0`n","video0`tname`tOBSERVED`tPICO Camera 0`r`n")
     $mixedParse=ConvertFrom-P3A6M2ProbeOutput -ProbeText $mixedAndroidLike -Source sysfs
     Assert-True ($mixedParse.valid -and $mixedParse.line_ending_classification -ceq 'MIXED' -and $mixedParse.record_count -eq 4) 'Only valid LF and CRLF boundaries are normalized in a mixed stream'
@@ -238,7 +242,7 @@ try {
         Invoke-WslSetup "rm '$missingAttrRoot/sys/real/n3/dev'"
         $partial=Invoke-GeneratedProbe sysfs 16 $missingAttrRoot
         $partialParsed=ConvertFrom-P3A6M2ProbeOutput $partial.Text sysfs
-        Assert-True ($partialParsed.valid -and $partialParsed.nodes.video3.fields.dev.status -ceq 'UNAVAILABLE' -and -not $partialParsed.nodes.video3.metadata_fields_complete) 'Missing one sysfs field preserves other observations without claiming a complete identity'
+        Assert-True ($partialParsed.valid -and $partialParsed.nodes.video3.fields.dev.status -ceq 'ATTRIBUTE_MISSING' -and -not $partialParsed.nodes.video3.metadata_fields_complete) 'Missing sysfs attribute has a bounded status while other observations survive'
     } finally {$null=Invoke-LocalWsl -LinuxArguments @('--exec','/bin/sh','-c',"rm -rf -- '$missingAttrRoot'")}
     $badRoot=New-FixtureRoot
     try {
@@ -246,26 +250,34 @@ try {
         Invoke-WslSetup "printf 'line1\nline2\n' > '$badRoot/sys/real/n4/name'; printf '5\n6\n' > '$badRoot/sys/real/n4/index'; printf '%s\n' 'Bad/Name' > '$badRoot/sys/real/n4/dev'"
         $bad=Invoke-GeneratedProbe sysfs 16 $badRoot
         $badParsed=ConvertFrom-P3A6M2ProbeOutput $bad.Text sysfs
-        Assert-True ($badParsed.valid -and $badParsed.nodes.video4.fields.name.status -ceq 'UNAVAILABLE' -and $badParsed.nodes.video4.fields.index.status -ceq 'UNAVAILABLE' -and $badParsed.nodes.video4.fields.dev.status -ceq 'UNAVAILABLE') 'Multiline and invalid sysfs values are explicit unavailable fields'
+        Assert-True ($badParsed.valid -and $badParsed.nodes.video4.fields.name.status -ceq 'INVALID' -and $badParsed.nodes.video4.fields.index.status -ceq 'INVALID' -and $badParsed.nodes.video4.fields.dev.status -ceq 'INVALID') 'Multiline and invalid sysfs values have bounded invalid status codes'
+        Assert-True ($null -eq $badParsed.nodes.video4.fields.name.value -and $null -eq $badParsed.nodes.video4.fields.index.value -and $null -eq $badParsed.nodes.video4.fields.dev.value) 'Invalid raw attribute contents are not retained'
+        Assert-True (-not $bad.Text.Contains('line1') -and -not $bad.Text.Contains('Bad/Name')) 'Malformed sysfs values are absent from the shell protocol output'
         Invoke-WslSetup "printf '%s\n' 'Bad Name' > '$badRoot/sys/real/n4/name'; printf '%s\n' '4' > '$badRoot/sys/real/n4/index'; printf '%s\n' '81:4' > '$badRoot/sys/real/n4/dev'; chmod 000 '$badRoot/sys/real/n4/name'"
         $denied=Invoke-GeneratedProbe sysfs 16 $badRoot
         $deniedParsed=ConvertFrom-P3A6M2ProbeOutput $denied.Text sysfs
         if($fixtureUid -cne '0'){
-            Assert-True ($deniedParsed.valid -and $deniedParsed.nodes.video4.fields.name.status -ceq 'PERMISSION_DENIED' -and $deniedParsed.source_status -ceq 'OBSERVED') 'Unreadable attribute denial is explicit while independent values survive'
+            Assert-True ($deniedParsed.valid -and $deniedParsed.nodes.video4.fields.name.status -ceq 'PERMISSION_DENIED' -and $null -eq $deniedParsed.nodes.video4.fields.name.value -and $deniedParsed.nodes.video4.index -ceq '4' -and $deniedParsed.source_status -ceq 'OBSERVED') 'Unreadable attribute denial is explicit, contains no value, and preserves independent observations'
         }
-        Invoke-WslSetup "chmod 600 '$badRoot/sys/real/n4/name'; printf '%s\n' 'Bad/Name' > '$badRoot/sys/real/n4/name'"
+        Invoke-WslSetup "chmod 600 '$badRoot/sys/real/n4/name'; chmod 000 '$badRoot/sys/real/n4';"
+        $parentDenied=Invoke-GeneratedProbe sysfs 16 $badRoot
+        $parentDeniedParsed=ConvertFrom-P3A6M2ProbeOutput $parentDenied.Text sysfs
+        if($fixtureUid -cne '0'){
+            Assert-True ($parentDeniedParsed.valid -and $parentDeniedParsed.nodes.video4.fields.name.status -ceq 'PERMISSION_DENIED' -and $parentDeniedParsed.nodes.video4.fields.index.status -ceq 'PERMISSION_DENIED' -and $parentDeniedParsed.source_status -ceq 'PERMISSION_DENIED') 'Unsearchable sysfs node directory is not misclassified as missing attributes'
+        }
+        Invoke-WslSetup "chmod 700 '$badRoot/sys/real/n4'; printf '%s\n' 'Bad/Name' > '$badRoot/sys/real/n4/name'"
         $slashName=Invoke-GeneratedProbe sysfs 16 $badRoot
         $slashParsed=ConvertFrom-P3A6M2ProbeOutput $slashName.Text sysfs
-        Assert-True ($slashParsed.valid -and $slashParsed.nodes.video4.fields.name.status -ceq 'UNAVAILABLE' -and $null -eq $slashParsed.nodes.video4.name) 'Names containing path separators are not recorded'
+        Assert-True ($slashParsed.valid -and $slashParsed.nodes.video4.fields.name.status -ceq 'INVALID' -and $null -eq $slashParsed.nodes.video4.name) 'Names containing path separators receive INVALID status and are not recorded'
         $longName='N'*97
         Invoke-WslSetup "printf '%s\n' '$longName' > '$badRoot/sys/real/n4/name'"
         $long=Invoke-GeneratedProbe sysfs 16 $badRoot
         $longParsed=ConvertFrom-P3A6M2ProbeOutput $long.Text sysfs
-        Assert-True ($longParsed.valid -and $longParsed.nodes.video4.fields.name.status -ceq 'UNAVAILABLE') 'Sysfs names above 96 ASCII characters are rejected'
+        Assert-True ($longParsed.valid -and $longParsed.nodes.video4.fields.name.status -ceq 'INVALID') 'Sysfs names above 96 ASCII characters receive INVALID status'
         Invoke-WslSetup "chmod 600 '$badRoot/sys/real/n4/name'; printf 'Bad\tName\n' > '$badRoot/sys/real/n4/name'"
         $control=Invoke-GeneratedProbe sysfs 16 $badRoot
         $controlParsed=ConvertFrom-P3A6M2ProbeOutput $control.Text sysfs
-        Assert-True ($controlParsed.valid -and $controlParsed.nodes.video4.fields.name.status -ceq 'UNAVAILABLE') 'Tab/control in attribute is never emitted as protocol data'
+        Assert-True ($controlParsed.valid -and $controlParsed.nodes.video4.fields.name.status -ceq 'INVALID') 'Tab/control in attribute is never emitted as protocol data and receives INVALID status'
     } finally {$null=Invoke-LocalWsl -LinuxArguments @('--exec','/bin/sh','-c',"rm -rf -- '$badRoot'")}
 } finally {$null=Invoke-LocalWsl -LinuxArguments @('--exec','/bin/sh','-c',"rm -rf -- '$multi'")}
 
@@ -276,6 +288,7 @@ try {
     $dev=Invoke-GeneratedProbe dev 16 $devRoot
     $devParsed=ConvertFrom-P3A6M2ProbeOutput $dev.Text dev
     Assert-True ($devParsed.valid -and $devParsed.nodes.video1.reason -ceq 'SYMLINK_EXCLUDED' -and $devParsed.nodes.video2.reason -ceq 'UNEXPECTED_TYPE') 'Reject symlinked and non-character /dev candidates'
+    Assert-Equal $devParsed.nodes.video1.node_id 'video1' 'Dev parser preserves exact validated videoN identifier'
     Assert-True (-not $dev.Text.Contains('videoX')) 'Ignore names without fully numeric suffixes'
     Assert-True (-not $dev.Text.Contains('video2bad')) 'Ignore suffixes that start numeric but are not fully numeric'
     $devOverflow=New-FixtureRoot
@@ -306,6 +319,17 @@ try {
         Assert-True ($missingLsParsed.valid -and $missingLsParsed.nodes.video0.reason -ceq 'LS_FAILED') 'Missing ls is an explicit unavailable field'
     } finally {$null=Invoke-LocalWsl -LinuxArguments @('--exec','/bin/sh','-c',"rm -rf -- '$charRoot'")}
 } finally {$null=Invoke-LocalWsl -LinuxArguments @('--exec','/bin/sh','-c',"chmod -R u+rwX '$devRoot' 2>/dev/null || true; rm -rf -- '$devRoot'")}
+
+$correlation=Get-P3A6M2NodeCorrelations -SysfsNodes @(
+    [pscustomobject]@{node_id='video3';dev='81:3'},
+    [pscustomobject]@{node_id='video4';dev='81:4'}
+) -DevNodes @(
+    [pscustomobject]@{node_id='video9';status='OBSERVED';device_number='81:3'},
+    [pscustomobject]@{node_id='video12';status='OBSERVED';device_number='81:12'}
+)
+$major81=@($correlation.major_groups | Where-Object major -ceq '81')[0]
+Assert-True ($major81.status -ceq 'AMBIGUOUS_BY_MAJOR' -and @($major81.sysfs_node_ids).Count -eq 2 -and @($major81.dev_node_ids).Count -eq 2) 'Shared major groups are explicitly ambiguous and preserve exact node identifiers'
+Assert-True ($correlation.exact_device_matches.Count -eq 1 -and $correlation.exact_device_matches[0].sysfs_node_id -ceq 'video3' -and $correlation.exact_device_matches[0].dev_node_id -ceq 'video9' -and $correlation.exact_device_matches[0].device_number -ceq '81:3') 'Synthetic sysfs-to-dev matching requires exact major:minor and retains both videoN identifiers'
 
 # Confirmation rejection paths and scope/expiry never reach the mock ADB executor.
 $approval=New-TestApproval
@@ -356,6 +380,7 @@ try {
     $marker=Get-Content -LiteralPath $collected.marker_path -Raw | ConvertFrom-Json
     Assert-Equal $marker.archive_sha256 (Get-FileHash $collected.archive_path -Algorithm SHA256).Hash.ToLowerInvariant() 'Final marker binds archive SHA-256'
     $evidence=Get-Content -LiteralPath (Join-Path $collected.evidence_directory 'evidence.json') -Raw | ConvertFrom-Json -AsHashtable
+    Assert-Equal $evidence.schema 'p3a6.m2.node_inventory.v2' 'Evidence schema revision reflects node identifiers and correlation fields'
     Assert-Equal $evidence.identity_status 'PHOENIX_SOFTWARE_IDENTITY_VERIFIED_OWNER_BOUND' 'Exact software identity tuple is recorded with owner-bound qualification'
     Assert-Equal $evidence.owner_declared_hardware_variant 'Pico 4 Pro' 'Owner-declared hardware fact remains separate from Android tuple'
     Assert-True ($evidence.identity_provenance -match 'not cryptographic attestation') 'Software tuple is not described as cryptographic attestation'
@@ -366,6 +391,9 @@ try {
     Assert-Equal $evidence.source_hashes.collector_module_sha256 (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot '..\tools\P3A6CameraNodes.psm1') -Algorithm SHA256).Hash.ToLowerInvariant() 'Evidence collector digest matches source file'
     Assert-Equal $evidence.sources.sysfs.build_identity $evidence.build.fingerprint.value 'Node source evidence binds observed build fingerprint'
     Assert-Equal $evidence.sources.sysfs.nodes[0].metadata_fields_complete $true 'Evidence reports attribute completeness without claiming device identity'
+    Assert-Equal $evidence.sources.sysfs.nodes[0].node_id 'video0' 'Serialized sysfs evidence preserves its exact videoN identifier'
+    Assert-Equal $evidence.sources.dev.nodes[0].node_id 'video0' 'Serialized /dev evidence preserves its exact videoN identifier'
+    Assert-True ($evidence.node_correlations.exact_device_matches.Count -eq 1 -and $evidence.node_correlations.exact_device_matches[0].sysfs_node_id -ceq 'video0' -and $evidence.node_correlations.exact_device_matches[0].dev_node_id -ceq 'video0') 'Private evidence includes bounded exact device-tuple correlation while retaining source identifiers'
     $evidenceJson=Get-Content -LiteralPath (Join-Path $collected.evidence_directory 'evidence.json') -Raw
     Assert-True ($evidenceJson -match '"observed_at_utc"\s*:\s*"\d{4}-\d{2}-\d{2}T[^\"]+Z"') 'Node source evidence includes UTC observation time'
     Assert-True (-not $evidence.safety_flags.exact_time -and -not $evidence.safety_flags.mapping_verified -and -not $evidence.safety_flags.pose_verified -and -not $evidence.safety_flags.shared_buffer_identity_verified -and -not $evidence.safety_flags.frame_meta_bridge_verified -and -not $evidence.safety_flags.live_lighthouse_correction_allowed -and -not $evidence.safety_flags.physical_event_verified) 'All timing, mapping, bridge, physical-event and Lighthouse gates remain false'
@@ -461,7 +489,7 @@ try {
         Assert-Equal $protocolEvidence.sources.sysfs.status 'UNAVAILABLE' 'Malformed source is explicitly unavailable while valid earlier records are not published as inventory'
         Assert-Equal $protocolEvidence.sources.sysfs.parser_error_code 'UNEXPECTED_RECORD' 'Source record carries its bounded parser error code'
         Assert-True (-not $protocolEvidenceJson.Contains('UNKNOWN_PRIVATE_SENTINEL') -and -not $protocolEvidenceJson.Contains('DO_NOT_PERSIST')) 'Malformed stdout is not persisted in private evidence'
-        Assert-True ($protocolEvidence.collector_revision -ceq 'P3-A6-M2-v2' -and -not ($protocolEvidence.PSObject.Properties.Name -contains 'stdout')) 'Diagnostic schema revision excludes raw stdout'
+        Assert-True ($protocolEvidence.collector_revision -ceq 'P3-A6-M2-v3' -and -not ($protocolEvidence.PSObject.Properties.Name -contains 'stdout')) 'Diagnostic schema revision excludes raw stdout'
     } finally {if(Test-Path -LiteralPath $protocolRoot){Remove-Item -LiteralPath $protocolRoot -Recurse -Force}}
 
     $framingFailureText=$androidLikeOutput.Replace("PICO Camera 0","PICO Camera 0`rBROKEN").Replace("`n","`r`n")
