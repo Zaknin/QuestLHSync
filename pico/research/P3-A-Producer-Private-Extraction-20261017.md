@@ -25,3 +25,11 @@ A sibling .manifest.json and .sha256 are published by .part -> independent SHA r
 PACKAGE_READY means the eight discovered producer candidates were acquired with verified bytes. It does NOT prove the runtime-selected HIDL module nor the provenance, epoch or SOF/exposure/rolling-shutter meaning of FrameMetaDate first word. Next is offline ELF DT_NEEDED, interface/vtable and clock source tracing. Keep observe_only=true, exact_time=false, live_lighthouse_correction_allowed=false, mapping_verified=false, pose_verified=false.
 
 Source prepared; Linux isolated mock 8/8 PASS; owner Windows and real Pico extraction tests pending.
+
+## M2.7B follow-up — `camx_core.so` provider acquisition
+
+Prepared offline at baseline `5ec6768c3f5a23a9ad24f4f8fa85d8bf4a3800c2` in [`P3-A6-M2.7A-CamX-Provider-Acquisition-Preparation.md`](P3-A6-M2.7A-CamX-Provider-Acquisition-Preparation.md). The dedicated runner discovers actual `camx_core.so` entries under all six existing P3-A roots and preserves all paths; it does not guess `/vendor` or `/system` as the only source. It verifies the exact owner-bound fingerprint/identity tuple and ABI, requires a fresh exact-action approval and interactive lowercase `yes`, and rechecks the common gate before each ADB command. It uses unprivileged read-only commands and the pinned SDK ADB executable.
+
+The runner performs size preflight for every candidate before any transfer, with 16-candidate, 64 MiB per-file, 128 MiB aggregate, 60-second, 200-observation, 160-command, and 64 KiB stdout caps. Each pulled ELF must pass remote pre/post SHA-256, local SHA/size, and ELF64/AArch64 checks. Local NDK `llvm-readelf` collects Build ID, dynamic symbols and `DT_NEEDED`. Exact Android 10/PICO shell compatibility and permissions remain unverified; the offline WSL probe is synthetic only.
+
+Future device run requires a separate owner approval for `read-only-camx-core-provider-acquisition`; M1/M2 approvals are not reusable. No M2.7B ADB/Pico run or canonical SMB publication has occurred. Proprietary ELF files are only allowed in the private canonical P3-A SMB package and must never enter GitHub. Candidate acquisition and symbol matches do not prove runtime loading or a complete CRM-to-CSL bridge.

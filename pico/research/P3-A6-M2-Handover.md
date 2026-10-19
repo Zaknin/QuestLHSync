@@ -140,3 +140,33 @@ M2.6 source-to-sink statuses: public CamX bridge `SOURCE_VERIFIED` for its own r
 Canonical M2.6 evidence publication: **PUBLISHED**, independently read back at `\\192.168.23.63\Torrents\Codex\PicoLHSync\P3-A`, base `p3a6-m2.6-camx-36fc163a-20261019T105742Z-16f06b2c`. The ZIP contains the report, manifest and four exact public source files; it includes no proprietary ELF or full disassembly. ZIP SHA-256 `7b7df28adb7a058a3bf2692d153463bfb9d08539f05dbc73cec9e18781726708` (80,539 bytes); external manifest SHA-256 `560138650c534fdbcee414332ba669a5d9f7efb8af581c00e3d872645c7811b4` (3,162 bytes); `.sha256` sidecar SHA-256 `bd1fb235426a489d6d98a94b9c638f39b349655d40f8e251ec725aecc4f91038` (250 bytes). Sidecar entries match independent final-file hashes. Read-back confirmed all four embedded source hashes, ZIP integrity, sidecar last-write ordering, and no `.part` files. The publisher raised `KeyError: 'errors'` while constructing its return object after the final files and sidecar had been committed; independent read-back verified the committed artifacts, so publication is confirmed while the publisher response error is retained here as a diagnostic.
 
 All gates remain false: `exact_time=false`, `mapping_verified=false`, `pose_verified=false`, `shared_buffer_identity_verified=false`, `frame_meta_bridge_verified=false`, `physical_event_verified=false`, `live_lighthouse_correction_allowed=false`.
+
+## M2.7A — provider acquisition preparation (offline only)
+
+Baseline `5ec6768c3f5a23a9ad24f4f8fa85d8bf4a3800c2`. A separate Python runner and synthetic/WSL tests are prepared for future `read-only-camx-core-provider-acquisition`. This is not an M2.7B run: no ADB/ADB server/Pico was used, no approval was created, no ELF was obtained, and no SMB publication was attempted. Existing M2.6 canonical artifacts were not changed or republished.
+
+The runner searches actual candidates under the six existing P3-A library roots, preserves every observed/resolved path, and fails closed on more than 16 candidates. It requires the exact owner-bound fingerprint, A8110/PICOA8110/Phoenix_ovs/Pico tuple, and `arm64-v8a`; no property tuple is treated as cryptographic attestation. It uses the pinned SDK ADB executable, explicit serial or transport ID, exact per-command argument allowlist, exact lowercase interactive `yes`, and a fresh approval for action `read-only-camx-core-provider-acquisition`. The common execution gate is rechecked immediately before every native ADB call.
+
+The effective bounds are 60 seconds, 200 ADB-call observations, 160 native invocations, 16 candidates, 64 MiB per ELF, 128 MiB aggregate transfer and 64 KiB returned ADB stdout. All candidate sizes are queried before any pull so an aggregate overflow does not select an arbitrary subset. For each acquired ELF the runner validates path resolution, remote SHA-256 before and after, local size/hash and ELF64/AArch64. Local NDK `llvm-readelf` records Build ID, dynamic exports/undefined symbols and `DT_NEEDED`; bridge symbol hits are static-analysis locators, not proof of a full callback bridge. Temporary local staging is removed after canonical package publication or failure.
+
+The generated POSIX script executed against temporary WSL fixtures with regular and symlink candidates, literal tab bytes and parser round-trip. This does not establish exact Android 10/PICO Toybox support for `find`, `readlink -f`, `wc -c`, or `sha256sum`, nor firmware access/SELinux permissions. No fallback is permitted. A future runner can only publish via the existing canonical P3-A SMB publisher, with the sidecar last; no publication took place during this preparation.
+
+The existing `canonical_commit()` receipt bug for diagnostic reports lacking an `errors` key is fixed with `.get('errors', [])`. A regression verifies a successful receipt and finalization order ZIP → manifest → `.sha256`; this task did not call the canonical publisher or re-publish M2.6 files.
+
+Future separately approved command (documented only; not executed):
+
+```powershell
+python .\pico\tools\p3a_m27b_camx_provider.py --approval-file "$env:LOCALAPPDATA\PicoLHSync\approvals\<fresh-M2.7B-approval>.json" --serial "<explicit-target>"
+```
+
+Alternative: replace the selector with `--transport-id <selected-positive-number>`. Expected result is a private package containing all verified candidate ELF files and a manifest, or an explicit `PARTIAL`/`BLOCKED` diagnostic package. The next hardware action requires the owner's separate explicit approval; do not reuse M1/M2 approval.
+
+The M2.6 bridge claim is unchanged: provider bytes and Build ID remain absent; kernel-event identity and runtime load remain **BLOCKED / NOT OBSERVED**. M2.7A offline synthetic success does not raise `M2-SOF-09` or any timing/mapping/physical-event gate.
+
+M2.7A verification totals: Python `unittest discover -s pico/tests` **223/223 PASS**; M1 PowerShell **29/29 PASS**; M2 PowerShell **410 PASS**; existing M1 WSL POSIX integration **PASS**; M2.7B WSL POSIX integration **PASS**; dry-run **DRY_RUN_ONLY**; `git diff --check` **PASS**. All are local synthetic/offline checks.
+
+### M2.7A final review and publication readiness
+
+Final offline review found that failed canonical `.part` read-back could leave a temporary file and a repeated package name could replace prior canonical outputs. `canonical_commit()` now validates the package basename, rejects existing finals/temporary files, creates temporary files exclusively, cleans only `.part` files created by the current call on failure, and returns a receipt only after final sidecar read-back. A regression verifies collision refusal preserves prior ZIP/manifest/sidecar bytes, traversal names fail, corrupt read-back leaves no `.part`, and successful receipt ordering remains ZIP → manifest → `.sha256`.
+
+The pinned SDK ADB resolver now rejects a path that resolves outside the configured SDK location; regression coverage includes an unrelated `adb.exe` in PATH, a simulated redirected pinned path, and missing SDK. Final status is **M2.7A offline preparation GO; M2.7B NOT AUTHORIZED / NOT RUN**. No ADB, approval, Pico, proprietary ELF, or SMB action occurred. Timing, mapping, pose, shared-buffer, frame-meta, physical-event, and Lighthouse gates remain false.

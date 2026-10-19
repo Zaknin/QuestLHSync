@@ -23,6 +23,7 @@ else:
 
 SCHEMA = 'p3a.producer_package.v1'
 SAFE_PATH = re.compile(r'^/(?:system|vendor)/lib64/(?:[A-Za-z0-9_.@+-]+/)*[A-Za-z0-9_.@+-]+\.so$')
+SAFE_PACKAGE_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$')
 
 
 def sha256(data: bytes) -> str:
@@ -182,35 +183,73 @@ def build_zip(stage: Path, report: dict) -> bytes:
 def canonical_commit(root: Path, name: str, report: dict, package: bytes,
                      *, readback=None) -> dict:
     """Canonical SMB .part -> independent readback SHA -> rename -> .sha256 LAST."""
+    if not isinstance(name, str) or not SAFE_PACKAGE_NAME.fullmatch(name):
+        raise ValueError('Invalid canonical package name')
     root.mkdir(parents=True, exist_ok=True)
     readback = readback or (lambda p: p.read_bytes())
     manifest = (json.dumps(report, indent=2, ensure_ascii=False) + '\n').encode('utf-8')
     outputs = [(name + '.zip', package), (name + '.manifest.json', manifest)]
     hashes = {}
-    for filename, content in outputs:
-        final = root / filename
-        part = root / (filename + '.part')
-        digest = sha256(content)
-        part.write_bytes(content)
-        if sha256(readback(part)) != digest:
-            raise IOError('Canonical SMB .part readback hash mismatch: ' + filename)
-        os.replace(part, final)
-        if sha256(readback(final)) != digest:
-            raise IOError('Canonical SMB final readback mismatch: ' + filename)
-        hashes[filename] = digest
     sidecar = root / (name + '.sha256')
-    part = root / (name + '.sha256.part')
-    body = ''.join(f'{digest}  {filename}\n' for filename, digest in hashes.items()).encode('ascii')
-    part.write_bytes(body)
-    if sha256(readback(part)) != sha256(body):
-        raise IOError('Canonical SMB sidecar .part readback failed')
-    os.replace(part, sidecar)  # FINAL commit indicator
-    if sha256(readback(sidecar)) != sha256(body):
-        raise IOError('Canonical SMB sidecar verification failed')
+    all_finals = [root / filename for filename, _ in outputs] + [sidecar]
+    all_parts = [root / (filename + '.part') for filename, _ in outputs]
+    all_parts.append(root / (name + '.sha256.part'))
+    # A generated run name is expected to be unique. Refuse collisions rather
+    # than replacing an earlier publication or following a planted .part link.
+    if any(path.exists() or path.is_symlink() for path in (*all_finals, *all_parts)):
+        raise FileExistsError('Canonical package name already has published or temporary files')
+
+    created_parts: list[Path] = []
+    try:
+        for filename, content in outputs:
+            final = root / filename
+            part = root / (filename + '.part')
+            digest = sha256(content)
+            with part.open('xb') as stream:
+                created_parts.append(part)
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if sha256(readback(part)) != digest:
+                raise IOError('Canonical SMB .part readback hash mismatch: ' + filename)
+            if final.exists() or final.is_symlink():
+                raise FileExistsError('Canonical destination appeared during publication')
+            os.replace(part, final)
+            created_parts.remove(part)
+            if sha256(readback(final)) != digest:
+                raise IOError('Canonical SMB final readback mismatch: ' + filename)
+            hashes[filename] = digest
+
+        body = ''.join(f'{digest}  {filename}\n' for filename, digest in hashes.items()).encode('ascii')
+        part = root / (name + '.sha256.part')
+        with part.open('xb') as stream:
+            created_parts.append(part)
+            stream.write(body)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if sha256(readback(part)) != sha256(body):
+            raise IOError('Canonical SMB sidecar .part readback failed')
+        if sidecar.exists() or sidecar.is_symlink():
+            raise FileExistsError('Canonical sidecar destination appeared during publication')
+        os.replace(part, sidecar)  # FINAL commit indicator
+        created_parts.remove(part)
+        if sha256(readback(sidecar)) != sha256(body):
+            raise IOError('Canonical SMB sidecar verification failed')
+    except BaseException as failure:
+        cleanup_failed = False
+        for part in created_parts:
+            try:
+                part.unlink(missing_ok=True)
+            except OSError:
+                cleanup_failed = True
+        if cleanup_failed:
+            raise IOError('Canonical publication failed and temporary-file cleanup was incomplete') from failure
+        raise
     return {'status': report['status'], 'zip': str(root / (name + '.zip')),
             'manifest': str(root / (name + '.manifest.json')), 'sha256': str(sidecar),
             'package_digest': hashes[name + '.zip'], 'verified_libraries': len(report['files']),
-            'requested_libraries': report.get('requested_count', 0), 'errors': report['errors']}
+            'requested_libraries': report.get('requested_count', 0),
+            'errors': report.get('errors', [])}
 
 
 def main(argv=None):

@@ -187,3 +187,26 @@ M1 inventory runner не вызывает `adb devices` и не запрашив
 ## Stop conditions
 
 Остановить сессию, если нужный факт требует root/ptrace без явного approval, доступа к image bytes, установки APK/agent, изменения logging/camera mode, patch/hook, запуска SteamVR/correction, или если observer вызывает ошибки/рост dropped frame кандидатов. Не продолжать «ради полного набора» после исчерпания разрешённого scope.
+
+## M2.7A prepared provider acquisition — permissions and residual risk
+
+The separate future action is `read-only-camx-core-provider-acquisition`; it is not covered by M1/M2 approvals. It requires a fresh exact-action approval, explicit ADB serial or numeric transport selector, exact lowercase interactive `yes`, pinned SDK ADB, and the common gate immediately before each command. The software identity tuple and `arm64-v8a` must match the owner-reported build. Hard caps are 60 seconds, 200 command observations, 160 native command invocations, 16 candidates, 64 MiB per candidate, 128 MiB total transfer, and 64 KiB returned ADB stdout. No root, device writes, camera, `/proc`, process memory, framebuffer, sensor, ioctl, or tracing access is permitted.
+
+| Source/operation | Permission and risk | Evidence value / limitation |
+|---|---|---|
+| Fixed `find` over six approved library roots | Ordinary unprivileged shell read/search permission; recursive scan may consume CPU/IO until the 60-second timeout. SELinux/DAC may hide entries. | Finds existing `camx_core.so` paths without guessing a partition. No result does not prove absence when any root is unavailable. |
+| `readlink -f` on a discovered candidate | Ordinary path traversal/read permissions; Android Toybox compatibility is unverified. | Resolves aliases and constrains source to approved root/lib64; does not prove which alias the runtime loader uses. |
+| `wc -c`, `sha256sum` on resolved candidate | Ordinary unprivileged file read; command availability and access are unverified on this firmware. Hashing can add storage IO. | Enforces transfer byte ceilings and records before/after source hashes; no ELF semantics. |
+| `adb pull` into temporary host staging | Unprivileged ADB transfer for an explicitly discovered candidate; can add device IO and has unmeasured performance impact. | Allows static ELF parsing; does not observe camera buffers or prove provider runtime loading. |
+| Local NDK `llvm-readelf` | No device permission; local CPU/memory cost bounded by subprocess timeout/output limit and input byte caps. | Reports Build ID, dynamic symbols and dependencies. Symbol matches locate code for review but do not establish a whole CRM-to-CSL bridge. |
+| Canonical private SMB publication | Host write permission to the existing private evidence share; transfer occurs after collection only. | Stores verified private package/manifest and commits with sidecar last. No M2.7A publication occurred. |
+
+Do not broaden roots, add shell fallbacks, or select one of multiple candidates. A discovered/accessible candidate is not process ownership, runtime-loaded dependency, event callback, frame delivery, physical SOF, or exposure start. `readlink -f`, `find`, `wc`, `sha256sum`, remote shell quoting and `adb pull` behavior remain unverified on the exact Android 10/PICO OS image; incompatible output stops with a diagnostic status. Preserve diagnostics privately, and never publish proprietary ELF to GitHub.
+
+Future operator command (not executed; requires fresh separate approval):
+
+```powershell
+python .\pico\tools\p3a_m27b_camx_provider.py --approval-file "$env:LOCALAPPDATA\PicoLHSync\approvals\<fresh-M2.7B-approval>.json" --serial "<explicit-target>"
+```
+
+Final offline review tightened publisher handling: unsafe names and pre-existing final/temporary paths fail closed; `.part` files are created exclusively and only temporary files created by the current call are cleaned after an error. A repeated name cannot replace previously published artifacts. This was verified with local synthetic files only; no SMB read-back occurred. The implementation does not claim protection against a hostile concurrent writer with permission to mutate the canonical share between filesystem operations, so existing share ACLs remain part of the trust boundary. M2.7A remains **offline preparation GO**; M2.7B remains **NOT AUTHORIZED / NOT RUN**.

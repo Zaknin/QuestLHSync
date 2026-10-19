@@ -7,6 +7,7 @@ import struct
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 from pico.tools import p3a_collect_producers as m
 from pico.tools.p3a_quickcamera_inventory import CAMERA_SHA, SAFETY
 
@@ -119,11 +120,40 @@ class ExtractionTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(Path(r['zip']).read_bytes()).hexdigest(),r['package_digest'])
             self.assertTrue(Path(r['sha256']).is_file())
             self.assertFalse(list(root.glob('*.part')))
+            published = {suffix: (root / f'test.{suffix}').read_bytes()
+                         for suffix in ('zip', 'manifest.json', 'sha256')}
+            with self.assertRaisesRegex(FileExistsError, 'already has'):
+                m.canonical_commit(root,'test',record,b'replacement')
+            self.assertEqual((root/'test.zip').read_bytes(), published['zip'])
+            self.assertEqual((root/'test.manifest.json').read_bytes(), published['manifest.json'])
+            self.assertEqual((root/'test.sha256').read_bytes(), published['sha256'])
+            with self.assertRaisesRegex(ValueError, 'package name'):
+                m.canonical_commit(root,'../escape',record,b'data')
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)
             with self.assertRaisesRegex(IOError,'readback'):
-                m.canonical_commit(root,'test',record,b'data',readback=lambda p:b'corrupt')
-            self.assertFalse((root/'test.sha256').exists())
+                m.canonical_commit(root,'corrupt',record,b'data',readback=lambda p:b'corrupt')
+            self.assertFalse((root/'corrupt.sha256').exists())
+            self.assertFalse(list(root.glob('*.part')))
+
+    def test_canonical_commit_missing_errors_returns_receipt_and_commits_sidecar_last(self):
+        record={'status':'PARTIAL','files':[],'safety':SAFETY}
+        replacements=[]
+        real_replace=m.os.replace
+
+        def record_replace(source, destination):
+            replacements.append(Path(destination).name)
+            return real_replace(source, destination)
+
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            with patch.object(m.os, 'replace', side_effect=record_replace):
+                receipt=m.canonical_commit(root,'diagnostic',record,b'partial diagnostic')
+            self.assertEqual(receipt['status'],'PARTIAL')
+            self.assertEqual(receipt['errors'],[])
+            self.assertEqual(replacements,['diagnostic.zip','diagnostic.manifest.json','diagnostic.sha256'])
+            self.assertEqual(hashlib.sha256(Path(receipt['zip']).read_bytes()).hexdigest(),receipt['package_digest'])
+            self.assertFalse(list(root.glob('*.part')))
 
 
 if __name__ == '__main__':
