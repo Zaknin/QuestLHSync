@@ -1,12 +1,14 @@
 # P3-A6-M2 — Read-Only Camera Metadata Proposal
 
-Дата: 2026-10-19. Репозиторий `C:\Dev\PicoLHSync`, branch `feature/pico-support`, basis `8ee2858c3e7f1054750126d369c2b2950d01855e`.
+Дата: 2026-10-19. Репозиторий `C:\Dev\PicoLHSync`, branch `feature/pico-support`, implementation baseline `1bbb542ff90a1ac60876bc1991aff68270864a2e`.
 
 ## Статус и границы
 
-**OFFLINE PROPOSAL ONLY — NOT AUTHORIZED / NOT RUN.** В M1.5 владелец подтвердил Pico 4 Pro на international Pico OS и сообщил partial inventory outcome: 13 QuickCamera/PVR process matches; первая `/proc/<pid>/fd` проверка получила `PROC_ACCESS_DENIED`; сбор остановился с `PARTIAL_PERMISSION_DENIED`, 10 commands, 10 records и нулём video-FD records. Ничего из этого не доказывает доступность оставшихся process descriptors. M2 ниже не использует и не распространяет M1 approval.
+Implementation addendum in [`P3-A6-M2-Handover.md`](P3-A6-M2-Handover.md) is authoritative for the exact shell bytes, hashes, test results and runner behavior; the proposal below retains the original research/design rationale.
 
-Первый M2 эксперимент предлагается ограничить системными метаданными Video4Linux nodes. Он не открывает `/dev/videoN`, не вызывает ioctl, CameraService, Camera2/Binder client, не читает чужую память или descriptor directories, не требует root и не запускает камеру. Отдельная per-process FD follow-up рассматривается отдельно и требует собственного точного approval action. Никакой M2 collector/allowlist коду в этой задаче не добавлен.
+**OFFLINE IMPLEMENTATION COMPLETE — HARDWARE NOT AUTHORIZED / NOT RUN.** В M1.5 владелец подтвердил Pico 4 Pro на international Pico OS и сообщил partial inventory outcome: 13 QuickCamera/PVR process matches; первая `/proc/<pid>/fd` проверка получила `PROC_ACCESS_DENIED`; сбор остановился с `PARTIAL_PERMISSION_DENIED`, 10 commands, 10 records и нулём video-FD records. Ничего из этого не доказывает доступность оставшихся process descriptors. Реализованный M2 node-only runner не использует и не принимает M1 approval.
+
+M2 ограничен системными метаданными Video4Linux nodes. Он не открывает `/dev/videoN`, не вызывает ioctl, CameraService, Camera2/Binder client, не читает чужую память или descriptor directories, не требует root и не запускает камеру. Отдельная per-process FD follow-up остаётся вне реализации и требует собственного точного approval action. Реализация и её offline acceptance описаны в [`P3-A6-M2-Handover.md`](P3-A6-M2-Handover.md); hardware phase в этой задаче не запускалась.
 
 ## Ранжирование источников
 
@@ -110,9 +112,9 @@ done
 [ "$found" -eq 1 ] || printf 'P3A6\tSYSFS_STATUS\tNOT_OBSERVED\n'
 ```
 
-Перед hardware implementation тест обязан проверять literal script hash, все поля и статусы; этот дизайн-код сейчас не входит в collector. Доступные записи считываются только из трёх фиксированных sysfs files; значения никогда не используются как format string или как pathname component.
+В реализованном варианте literal script bytes и динамический numeric node limit проверяются exact native allowlist; результаты offline fixture testing перечислены в handover. Доступные записи считываются только из трёх фиксированных sysfs files; значения никогда не используются как format string или как pathname component.
 
-`DEVNODE_METADATA_V1` — fixed POSIX script, который обходит только `/dev/video[0-9]*`, проверяет suffix на decimal и лимит 16. Он сначала проверяет `-L` и выдаёт `SYMLINK_EXCLUDED` для symlink, затем `-c` для обычного character device; так `ls` не получает symlink и не печатает его target. Для regular character node вызывается только `ls -ln <fixed /dev/videoN path>`; parser принимает только bounded numeric mode/uid/gid/major:minor fields и отбрасывает любые строки с неожиданным framing. Сырой `ls` output не сохраняется. Он никогда не открывает video node, не вызывает ioctl, `v4l2-ctl`, streaming API или `stat` на произвольных paths. Недоступные/ошибочные значения становятся explicit status records, не пустым успешным результатом. Совместимость `ls -ln` и точный Toybox output на target требуют проверки только после отдельного разрешения; incompatibility даст `UNAVAILABLE`/`BLOCKED`, без fallback на более широкие команды.
+`DEVNODE_METADATA_V1` — fixed POSIX script, который обходит только `/dev/video[0-9]*`, проверяет suffix на decimal и лимит 16. Он сначала проверяет `-L` и выдаёт `SYMLINK_EXCLUDED` для symlink, затем `-c` для character device; только после этого вызывается `ls -ldn <fixed /dev/videoN path>`. Parser принимает bounded numeric uid/gid/major:minor fields и отбрасывает неожиданный framing; сырой `ls` output не сохраняется. Node не открывается, ioctl/`v4l2-ctl`/streaming API не вызываются. Incompatible/missing Toybox-shaped output даёт `UNAVAILABLE` без fallback. WSL synthetic fake-`ls` fixture test проверяет parser shape; установленный Toybox Pico OS и его output остаются **UNVERIFIED** до отдельно разрешённого run.
 
 ### Следующий отдельный scope: process FD follow-up
 
@@ -134,18 +136,18 @@ CameraService dump остаётся вне allowlist: даже если на к�
 
 `NOT_OBSERVED`, `UNAVAILABLE`, `PERMISSION_DENIED`, `LIMIT_REACHED` — самостоятельные outcomes; их нельзя превращать в пустой `PASS`. Не сохранять raw denial text, SELinux contexts целиком или непрофильные paths. Process names/PIDs и FD target metadata приватны и остаются только в отдельном approved process-FD action.
 
-## Acceptance criteria будущего offline-reviewed implementation
+## Acceptance criteria implementation и future hardware
 
-1. Approval gate требует новую точную action строку и ограничивает 30 s/40 records для node-only scope; процессный follow-up требует другого approval action с 60 s/200 records/13 PID hard caps.
-2. Gate проходит перед каждой ADB-командой; exact native allowlist отклоняет все vectors вне приведённых шаблонов. Пинованный ADB path и M1 privacy controls остаются.
-3. Synthetic fixtures проверяют отсутствие sysfs/node entries, несколько nodes, permission denial, malformed/tab/newline values, 16-node cap, symlink exclusion, character-node selection, process PID reuse/disappearance, per-PID denial и отказ unexpected protocol.
-4. Ни один probe не открывает video node, не запускает CameraService/client, не читает buffer/frame/process memory, не поднимает права и не меняет camera/tracking configuration.
-5. Private evidence сохраняет точные statuses/method/build/time/caps/count/hash; safety gates остаются `false`.
-6. В hardware results отдельными пунктами указано, что node existence/name/FD holder не доказывают ioctl attribution, queue ownership, frame delivery, SOF или exposure start.
+1. Реализованный runner требует exact action `read-only-camera-node-metadata`, проверяет approval перед каждой командой, ограничивает run до 30 s/40 node observations/16 nodes per source и требует интерактивный lowercase `yes`.
+2. Exact native allowlist и pinned SDK ADB принимают только фиксированные vectors/default-or-explicit numeric transport и embedded POSIX templates; произвольные commands/paths/command substitutions отклоняются.
+3. Offline WSL/PowerShell fixtures проверяют empty/missing/inaccessible sources, symlink-backed sysfs entries, partial/unreadable/multiline/control values, 16-node/overflow limits, `/dev` symlink/non-character exclusion, missing/incompatible/multiline `ls` output, shell bytes/parser round-trip, budget/timeout exhaustion и confirmation/gate failures. Process-PID reuse и per-PID denial не входят в M2.
+4. Probes не открывают video node, не запускают CameraService/client, не читают buffer/frame/process memory, не поднимают права и не меняют camera/tracking configuration.
+5. Private evidence records statuses/method/build/time/caps/count/source hashes/archive integrity and retains the false safety gates.
+6. Future hardware output must state that node existence/name/device number does not prove ioctl attribution, queue ownership, frame delivery, SOF or exposure start.
 
-До реализации этих criteria и новой прямой owner authorization M2 execution status — **NOT AUTHORIZED / NOT RUN**.
+Offline implementation criteria выполнены и задокументированы в handover; M2 hardware execution status остаётся **NOT AUTHORIZED / NOT RUN** до отдельного owner approval.
 
-Offline validation (2026-10-19): the documented sysfs POSIX template was extracted and parsed by local WSL `/bin/sh -n` — **PASS**. This checks shell syntax only; it does not execute the template against sysfs fixtures or a Pico, does not test Android/Toybox compatibility, and does not provide device evidence.
+Offline validation (2026-10-19): generated production scripts execute in local WSL `/bin/sh` against synthetic roots; shell stdout bytes include real `0x09` tabs and round-trip through `ConvertFrom-P3A6M2ProbeOutput`. PowerShell harness reports **336 assertions PASS** (see final complete test totals in handover). A collection is `COMPLETE` only when both sources and every returned node metadata record are observed; otherwise independently observed values are retained with `PARTIAL_LIMITATIONS`. `metadata_fields_complete` describes only the three sysfs attributes and is not a hardware identity claim. The test-only fake `ls` shape validates parser behavior, not installed Android/Toybox compatibility. No Pico/ADB/device evidence was produced; hardware status remains **NOT RUN**.
 
 ## Static Pico userspace/Binder paths from prior phases
 

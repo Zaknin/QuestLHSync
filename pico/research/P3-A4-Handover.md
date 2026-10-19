@@ -1,5 +1,9 @@
 # P3-A6-M0 — QuickCamera timestamp provenance handover
 
+## Current update — P3-A6-M2 (2026-10-19)
+
+M2 node-metadata implementation is prepared offline in a dedicated PowerShell 7 runner. See [`P3-A6-M2-Handover.md`](P3-A6-M2-Handover.md), the updated [acceptance matrix](P3-A6-Acceptance-Matrix.md), [risk/permissions](P3-A6-Risk-and-Permissions.md), and [proposal](P3-A6-M2-Read-Only-Camera-Metadata-Proposal.md). The separate action is `read-only-camera-node-metadata`, hard limits 30 s/40 observations/16 candidates per source, and it requires interactive exact lowercase `yes` after a fresh approval. It only lists fixed sysfs attributes and `/dev/videoN` metadata; it does not open devices or establish VideoQueueUtil ownership, ioctl attribution, frame delivery, SOF or exposure timing. The M1.5 owner-reported result remains `PARTIAL_PERMISSION_DENIED`. M2 has not run on Pico; no ADB, approval record, camera service, `/proc`, root, SteamVR or Lighthouse was used in this preparation.
+
 Текущее состояние на 2026-10-18: подготовлена offline-фаза runtime validation в `C:\Dev\PicoLHSync`, branch `feature/pico-support`, от исходного HEAD `97977e868ac5d0a3e743d6323266db2b666a6a06`. Pico, ADB, SSH, SteamVR и Lighthouse correction не запускались. В репозитории есть только synthetic analyzer и authorization checker; device-facing collector отсутствует.
 
 P3-A5 выводы ниже без изменений: `/dev/videoN` для конкретного `VideoQueueUtil` остаётся `UNKNOWN`; QBUF/DQBUF kernel roundtrip — `PARTIAL/BLOCKED`; CSLAlloc producer CPU VA ↔ PVR FD backing identity — `UNKNOWN/BLOCKED`; QTIMER event, units и физическое SOF/exposure не доказаны.
