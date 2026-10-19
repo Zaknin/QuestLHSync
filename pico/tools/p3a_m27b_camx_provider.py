@@ -1,8 +1,8 @@
-"""M2.7B: separately approved, read-only acquisition of observed camx_core ELF files.
+"""M2.7B: owner-authorized, read-only acquisition of observed camx_core ELF files.
 
-Importing this module and running --dry-run are device-free.  The CLI requires
-an exact, scoped approval, an explicit ADB target, and an interactive `yes`.
-Every native ADB operation is re-gated and checked against a fixed allowlist.
+Importing this module and running --dry-run are device-free. The execution
+path is pinned to the exact owner-authorized ADB serial and action. Every
+native ADB operation is checked against a fixed allowlist and hard caps.
 """
 from __future__ import annotations
 
@@ -25,11 +25,11 @@ from uuid import uuid4
 if __package__:
     from .p3a_collect_producers import build_zip, canonical_commit, sha256, validate_arm64_elf
     from .p3a_quickcamera_inventory import ROOT, ROOTS
-    from .p3a6_execution_gate import APPROVAL_SCHEMA, TARGET_DEVICE, check_hardware_execution_gate
+    from .p3a6_execution_gate import TARGET_DEVICE
 else:
     from p3a_collect_producers import build_zip, canonical_commit, sha256, validate_arm64_elf
     from p3a_quickcamera_inventory import ROOT, ROOTS
-    from p3a6_execution_gate import APPROVAL_SCHEMA, TARGET_DEVICE, check_hardware_execution_gate
+    from p3a6_execution_gate import TARGET_DEVICE
 
 
 ACTION = 'read-only-camx-core-provider-acquisition'
@@ -42,7 +42,8 @@ MAX_PROVIDER_FILE_BYTES = 64 * 1024 * 1024
 MAX_TOTAL_PROVIDER_BYTES = 128 * 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024
 MAX_READELF_OUTPUT_BYTES = 4 * 1024 * 1024
-MAX_APPROVAL_BYTES = 64 * 1024
+TARGET_SERIAL_ENV = 'P3A_M27B_TARGET_SERIAL'
+TARGET_SERIAL_SHA256 = 'd5291a8f32e51e3bfa1b20a3a0dea1c7b3afb7d3f9c3cbabceceac3be7f2fc2c'
 TARGET_FINGERPRINT = 'Pico/Phoenix_ovs/PICOA8110:10/5.11.2/smartcm.1725996131:user/dev-keys'
 TARGET_ABI = 'arm64-v8a'
 EXPECTED_PROPERTIES = {
@@ -135,6 +136,7 @@ SCRIPT_SHA256 = hashlib.sha256(DISCOVERY_SCRIPT.encode('utf-8')).hexdigest()
 _SEGMENT = re.compile(r'^[A-Za-z0-9_.+@=-]+$')
 _BUILD_ID = re.compile(r'\bBuild ID:\s*([a-fA-F0-9]{16,64})\b')
 _NEEDED = re.compile(r'\(NEEDED\).*?\[([^\]\r\n]{1,256})\]')
+_IPV4_ENDPOINT = re.compile(r'(?<![A-Za-z0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}(?![0-9])')
 
 
 class LimitReachedError(ValueError):
@@ -151,17 +153,20 @@ class RunnerStop(RuntimeError):
         self.code = code
 
 
-def device_selector(*, serial: str | None = None,
-                    transport_id: int | str | None = None) -> list[str]:
-    if (serial is None) == (transport_id is None):
-        raise ValueError('Select exactly one explicit ADB serial or transport ID')
-    if serial is not None:
-        if not isinstance(serial, str) or not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', serial):
-            raise ValueError('Invalid ADB serial selector')
-        return ['-s', serial]
-    if isinstance(transport_id, bool) or not str(transport_id).isdigit() or int(transport_id) < 1:
-        raise ValueError('Transport ID must be a positive decimal integer')
-    return ['-t', str(int(transport_id))]
+def owner_authorized_target_serial(env: Mapping[str, str] | None = None) -> str:
+    """Resolve the fixed target without storing its address in the repository."""
+    source = os.environ if env is None else env
+    serial = source.get(TARGET_SERIAL_ENV)
+    if (not isinstance(serial, str)
+            or not re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', serial)
+            or hashlib.sha256(serial.encode('utf-8')).hexdigest() != TARGET_SERIAL_SHA256):
+        raise ValueError('TARGET_BINDING_MISMATCH')
+    return serial
+
+
+def device_selector() -> list[str]:
+    """Return the only selector permitted by this owner-authorized run."""
+    return ['-s', owner_authorized_target_serial()]
 
 
 def resolve_adb_executable(env: Mapping[str, str] | None = None) -> Path:
@@ -277,6 +282,35 @@ def parse_single_value(raw: str) -> str:
     return lines[0]
 
 
+def parse_connect_output(raw: str, target_serial: str | None = None) -> str:
+    target_serial = target_serial or owner_authorized_target_serial()
+    line = parse_single_value(raw)
+    if line == f'connected to {target_serial}':
+        return 'CONNECTED'
+    if line == f'already connected to {target_serial}':
+        return 'ALREADY_CONNECTED'
+    if line == f'failed to authenticate to {target_serial}':
+        raise ValueError('ADB_CONNECT_AUTHENTICATION_FAILED')
+    if line == f'failed to connect to {target_serial}':
+        raise ValueError('ADB_CONNECT_FAILED')
+    if line.startswith(f'cannot connect to {target_serial}:'):
+        if 'actively refused' in line.lower() or '(10061)' in line:
+            raise ValueError('ADB_CONNECT_REFUSED')
+        raise ValueError('ADB_CONNECT_FAILED')
+    raise ValueError('ADB_CONNECT_OUTPUT_UNEXPECTED')
+
+
+def redacted_connect_output_preview(raw: str, target_serial: str) -> str:
+    """Retain only a short, target-redacted diagnostic for connect failures."""
+    safe = raw.replace(target_serial, '<TARGET>')
+    safe = _IPV4_ENDPOINT.sub('<ENDPOINT>', safe)
+    safe = ''.join(
+        char if char in '\r\n\t' or 0x20 <= ord(char) <= 0x7e else '?'
+        for char in safe
+    )
+    return safe[:256]
+
+
 def parse_sha256sum(raw: str, expected_path: str) -> str:
     line = parse_single_value(raw)
     match = re.fullmatch(r'([a-fA-F0-9]{64})\s+(.+)', line)
@@ -351,10 +385,14 @@ def allowed_adb_arguments(arguments: list[str] | tuple[str, ...],
                           candidates: list[Any] | tuple[Any, ...],
                           stage: Path) -> bool:
     argv = list(arguments)
-    prefix = list(selector)
-    if (len(prefix) != 2 or not (
-            (prefix[0] == '-s' and re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', prefix[1]))
-            or (prefix[0] == '-t' and prefix[1].isdigit() and int(prefix[1]) >= 1))):
+    try:
+        target_serial = owner_authorized_target_serial()
+    except ValueError:
+        return False
+    prefix = ['-s', target_serial]
+    if argv == ['connect', target_serial]:
+        return True
+    if list(selector) != prefix:
         return False
     if argv[:len(prefix)] != prefix:
         return False
@@ -397,6 +435,8 @@ def dry_run_plan() -> dict[str, Any]:
     return {
         'action': ACTION,
         'device': TARGET_DEVICE,
+        'authorization_mode': 'OWNER_AUTHORIZED_DIRECT_INSTRUCTION',
+        'target_binding': 'fixed ADB serial; no device enumeration',
         'max_duration_seconds': MAX_DURATION_SECONDS,
         'max_observations': MAX_OBSERVATIONS,
         'max_adb_commands': MAX_ADB_COMMANDS,
@@ -524,27 +564,19 @@ def readelf_metadata(path: Path, executable: Path | None = None,
     return parse_readelf_metadata(output.decode('utf-8', errors='replace'))
 
 
-def _valid_approval_limits(approval: Mapping[str, Any]) -> bool:
-    duration = approval.get('max_duration_seconds')
-    observations = approval.get('max_observations')
-    return (
-        type(duration) is int and 1 <= duration <= MAX_DURATION_SECONDS
-        and type(observations) is int and 1 <= observations <= MAX_OBSERVATIONS
-    )
-
-
 def collect_provider(
-    approval: Mapping[str, Any] | None,
-    confirmation_response: str,
     selector: list[str] | tuple[str, ...],
     stage: Path,
     *,
     executor: Callable[..., str],
     metadata_reader: Callable[..., Mapping[str, Any]],
-    direct_user_instruction: bool,
-    now_utc_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    owner_authorized: bool,
     monotonic_fn: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
+    try:
+        target_serial = owner_authorized_target_serial()
+    except ValueError:
+        target_serial = None
     created_utc = datetime.now(timezone.utc).isoformat()
     report: dict[str, Any] = {
         'schema': SCHEMA,
@@ -553,11 +585,22 @@ def collect_provider(
         'finished_utc': None,
         'action': ACTION,
         'device': TARGET_DEVICE,
+        'target_serial': target_serial,
+        'authorization_mode': 'OWNER_AUTHORIZED_DIRECT_INSTRUCTION',
+        'authorization_record': {
+            'basis': 'out-of-band direct owner authorization is a required precondition',
+            'action_scope': ACTION,
+            'target_binding': 'single digest-pinned serial',
+            'interactive_confirmation_used': False,
+            'owner_identity_verified_by_runner': False,
+            'cryptographic_attestation': False,
+        },
         'status': 'BLOCKED',
         'safety': SAFETY.copy(),
         'build_identity': {},
         'methods': {
-            'device_selection': 'explicit ADB serial or numeric transport ID; no adb devices scan',
+            'device_selection': 'fixed owner-authorized ADB serial; no adb devices scan',
+            'connection': 'adb connect to the fixed serial, followed by selected-target get-state',
             'library_discovery': 'fixed POSIX find/readlink probe over six P3-A library roots',
             'size_preflight': 'unprivileged wc -c for every candidate before any pull; 64 MiB/file and 128 MiB aggregate caps',
             'remote_sha256': 'unprivileged adb shell sha256sum before and after each pull',
@@ -580,33 +623,21 @@ def collect_provider(
         'runtime_dependency_verified': False,
         'kernel_event_identity_verified': False,
     }
-    if confirmation_response != 'yes':
-        report['status'] = 'BLOCKED_CONFIRMATION_REQUIRED'
-        report['errors'].append({'code': 'CONFIRMATION_REQUIRED'})
+    if owner_authorized is not True:
+        report['status'] = 'BLOCKED_OWNER_AUTHORIZATION_REQUIRED'
+        report['errors'].append({'code': 'OWNER_AUTHORIZATION_REQUIRED'})
         return report
-    if not direct_user_instruction:
-        report['status'] = 'BLOCKED_DIRECT_INSTRUCTION_REQUIRED'
-        report['errors'].append({'code': 'DIRECT_INSTRUCTION_REQUIRED'})
+    if target_serial is None:
+        report['status'] = 'BLOCKED_TARGET_BINDING'
+        report['errors'].append({'code': 'TARGET_BINDING_MISMATCH'})
         return report
-    if not isinstance(approval, Mapping):
-        report['status'] = 'BLOCKED_NO_APPROVAL'
-        report['errors'].append({'code': 'NO_APPROVAL'})
+    if list(selector) != ['-s', target_serial]:
+        report['status'] = 'BLOCKED_TARGET_NOT_ALLOWLISTED'
+        report['errors'].append({'code': 'TARGET_NOT_ALLOWLISTED'})
         return report
-    if not _valid_approval_limits(approval):
-        report['status'] = 'BLOCKED_UNBOUNDED_APPROVAL'
-        report['errors'].append({'code': 'APPROVAL_LIMITS_EXCEED_ACTION_CAPS'})
-        return report
-    approval_id = approval.get('approval_id')
-    if not isinstance(approval_id, str) or not approval_id:
-        report['status'] = 'BLOCKED_INVALID_APPROVAL'
-        report['errors'].append({'code': 'INVALID_APPROVAL_ID'})
-        return report
-    # The full gate token is constructed only after exact interactive `yes`.
-    gate_confirmation = f'P3-A6 APPROVE {approval_id} {ACTION}'
-    report['approval_id'] = approval_id
     started = monotonic_fn()
-    duration_limit = min(MAX_DURATION_SECONDS, approval['max_duration_seconds'])
-    observation_limit = min(MAX_OBSERVATIONS, approval['max_observations'])
+    duration_limit = MAX_DURATION_SECONDS
+    observation_limit = MAX_OBSERVATIONS
     candidates: list[dict[str, str]] = []
 
     def call(arguments: list[str]) -> str:
@@ -615,11 +646,8 @@ def collect_provider(
             raise RunnerStop('PARTIAL_TIMEOUT', 'DURATION_LIMIT')
         if report['adb_command_count'] >= MAX_ADB_COMMANDS or report['observations'] >= observation_limit:
             raise RunnerStop('PARTIAL_LIMIT_REACHED', 'OBSERVATION_LIMIT')
-        decision = check_hardware_execution_gate(
-            approval, ACTION, gate_confirmation, now_utc=now_utc_fn(),
-        )
-        if not decision.allowed:
-            raise RunnerStop(decision.status, decision.status)
+        if owner_authorized is not True or list(selector) != ['-s', target_serial]:
+            raise RunnerStop('BLOCKED_OWNER_AUTHORIZATION_REQUIRED', 'OWNER_AUTHORIZATION_REQUIRED')
         if not allowed_adb_arguments(arguments, selector, candidates, stage):
             raise RunnerStop('BLOCKED_COMMAND_NOT_ALLOWLISTED', 'COMMAND_NOT_ALLOWLISTED')
         remaining = duration_limit - (monotonic_fn() - started)
@@ -642,6 +670,25 @@ def collect_provider(
         return fingerprint, abi
 
     try:
+        try:
+            connect_output = call(['connect', target_serial])
+            report['connection_status'] = parse_connect_output(
+                connect_output, target_serial,
+            )
+        except ValueError as exc:
+            diagnostic_code = str(exc)
+            report['connection_diagnostic'] = {
+                'classification': 'REJECTED_FIXED_PROTOCOL_RESPONSE',
+                'error_code': diagnostic_code,
+                'raw_output_saved': False,
+                'redacted_preview': redacted_connect_output_preview(
+                    locals().get('connect_output', ''), target_serial,
+                ),
+            }
+            status = ('BLOCKED_ADB_CONNECT_REFUSED'
+                      if diagnostic_code == 'ADB_CONNECT_REFUSED'
+                      else 'BLOCKED_CONNECT_OUTPUT')
+            raise RunnerStop(status, diagnostic_code) from exc
         state = parse_single_value(call([*selector, 'get-state']))
         if state != 'device':
             raise RunnerStop('BLOCKED_DEVICE_STATE', 'ADB_TARGET_NOT_READY')
@@ -803,71 +850,109 @@ def collect_provider(
     return report
 
 
-def _load_approval(path: Path) -> Mapping[str, Any]:
-    raw = path.read_bytes()
-    if len(raw) > MAX_APPROVAL_BYTES:
-        raise ValueError('Approval record exceeds size limit')
-    value = json.loads(raw)
-    if not isinstance(value, dict):
-        raise ValueError('Approval record must be an object')
-    return value
+def _preflight_failure_report(code: str, target_serial: str | None = None) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        'schema': SCHEMA,
+        'created_utc': now,
+        'started_utc': now,
+        'finished_utc': now,
+        'action': ACTION,
+        'device': TARGET_DEVICE,
+        'target_serial': target_serial,
+        'authorization_mode': 'OWNER_AUTHORIZED_DIRECT_INSTRUCTION',
+        'authorization_record': {
+            'basis': 'out-of-band direct owner authorization is a required precondition',
+            'action_scope': ACTION,
+            'target_binding': 'single digest-pinned serial',
+            'interactive_confirmation_used': False,
+            'owner_identity_verified_by_runner': False,
+            'cryptographic_attestation': False,
+        },
+        'status': ('BLOCKED_TARGET_BINDING' if code == 'TARGET_BINDING_MISMATCH'
+                   else 'BLOCKED_ADB_PREFLIGHT'),
+        'safety': SAFETY.copy(),
+        'build_identity': {},
+        'methods': {
+            'device_selection': 'fixed owner-authorized ADB serial; no adb devices scan',
+            'connection': 'not attempted because target binding or local ADB preflight failed',
+        },
+        'discovery_script_sha256': SCRIPT_SHA256,
+        'root_status': {},
+        'candidates': [],
+        'candidate_sizes': [],
+        'planned_provider_bytes': 0,
+        'candidate_limitations': [],
+        'files': [],
+        'errors': [{'code': code}],
+        'adb_command_count': 0,
+        'observations': 0,
+        'timestamp_proven': False,
+        'bridge_verified': False,
+        'runtime_dependency_verified': False,
+        'kernel_event_identity_verified': False,
+    }
 
 
-def main(argv: list[str] | None = None, *, input_fn: Callable[[str], str] = input) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    selector = parser.add_mutually_exclusive_group()
-    selector.add_argument('--serial')
-    selector.add_argument('--transport-id')
-    parser.add_argument('--approval-file', type=Path)
+    parser.add_argument(
+        '--owner-authorized-run', action='store_true',
+        help='run after current direct owner authorization; the mode flag does not authenticate the owner',
+    )
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args(argv)
     if args.dry_run:
+        if args.owner_authorized_run:
+            print('BLOCKED: --dry-run cannot be combined with an execution mode', file=sys.stderr)
+            return 2
         print(json.dumps(dry_run_plan(), separators=(',', ':')))
         return 0
-    if args.serial is None and args.transport_id is None:
-        print('BLOCKED: explicit --serial or --transport-id is required', file=sys.stderr)
+    if not args.owner_authorized_run:
+        print('BLOCKED: explicit --owner-authorized-run mode is required', file=sys.stderr)
         return 2
-    if args.approval_file is None:
-        print('BLOCKED: a separate M2.7B approval file is required', file=sys.stderr)
-        return 2
+
+    target_serial: str | None = None
+    adb_executable: Path | None = None
+    preflight_error: str | None = None
     try:
-        device_args = device_selector(serial=args.serial, transport_id=args.transport_id)
-        approval = _load_approval(args.approval_file)
-        if not _valid_approval_limits(approval):
-            raise ValueError('Approval limits exceed the M2.7B action caps')
-        if not sys.stdin.isatty():
-            print('BLOCKED: interactive exact lowercase yes is required', file=sys.stderr)
-            return 2
-        effective_duration = min(MAX_DURATION_SECONDS, approval['max_duration_seconds'])
-        effective_observations = min(MAX_OBSERVATIONS, approval['max_observations'])
+        target_serial = owner_authorized_target_serial()
+        adb_executable = resolve_adb_executable()
+    except ValueError:
+        preflight_error = 'TARGET_BINDING_MISMATCH'
+    except Exception as exc:
+        preflight_error = 'PINNED_ADB_UNAVAILABLE'
+
+    device_args = ['-s', target_serial] if target_serial else []
+    effective_duration = MAX_DURATION_SECONDS
+    effective_observations = MAX_OBSERVATIONS
+    if adb_executable is not None:
         print(
             f'Device: {TARGET_DEVICE}\n'
             f'Action: {ACTION}\n'
             f'Maximum duration: {effective_duration} seconds\n'
-            f'Maximum ADB observations: {effective_observations}\n'
+            f'Maximum observations: {effective_observations}\n'
             f'Maximum candidates: {MAX_CANDIDATES}\n'
             f'Maximum ELF transfer: {MAX_PROVIDER_FILE_BYTES // (1024 * 1024)} MiB each, '
             f'{MAX_TOTAL_PROVIDER_BYTES // (1024 * 1024)} MiB total\n'
+            'Target: fixed owner-authorized serial binding\n'
             'Required identity: exact owner-bound firmware fingerprint and arm64-v8a ABI'
         )
-        if input_fn('Confirm operation (yes/no): ') != 'yes':
-            print('BLOCKED: confirmation rejected', file=sys.stderr)
-            return 2
-        adb_executable = resolve_adb_executable()
-    except Exception as exc:
-        print(f'BLOCKED_PREFLIGHT: {type(exc).__name__}', file=sys.stderr)
-        return 2
 
     name = datetime.now(timezone.utc).strftime('p3a-m27b-camx-core-%Y%m%dT%H%M%SZ-') + uuid4().hex[:8]
     # Temporary local staging is deleted on success, partial result, and SMB
     # publication failure. Canonical SMB is the only persistent ELF location.
     with tempfile.TemporaryDirectory(prefix='p3a-m27b-camx-private-') as temp:
         stage = Path(temp)
-        report = collect_provider(
-            approval, 'yes', device_args, stage,
-            executor=native_adb_executor(adb_executable), metadata_reader=readelf_metadata,
-            direct_user_instruction=True,
-        )
+        if preflight_error is not None:
+            report = _preflight_failure_report(preflight_error, target_serial)
+        else:
+            assert adb_executable is not None
+            report = collect_provider(
+                device_args, stage,
+                executor=native_adb_executor(adb_executable), metadata_reader=readelf_metadata,
+                owner_authorized=True,
+            )
         try:
             package = build_zip(stage, report)
             receipt = canonical_commit(Path(ROOT), name, report, package)

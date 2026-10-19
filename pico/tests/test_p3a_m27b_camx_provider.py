@@ -1,8 +1,7 @@
 """Synthetic P3-A6 M2.7B provider tests; never invokes ADB or device services."""
-from datetime import datetime, timedelta, timezone
 import hashlib
-import json
 import io
+import os
 from pathlib import Path
 import struct
 import tempfile
@@ -12,26 +11,14 @@ from unittest.mock import patch
 from pico.tools import p3a_m27b_camx_provider as m
 
 
+TEST_TARGET = 'm27b-test.invalid:5555'
+
+
 def elf64():
     raw = bytearray(64)
     raw[:6] = b'\x7fELF\x02\x01'
     struct.pack_into('<H', raw, 18, 183)
     return bytes(raw)
-
-
-def approval(action=m.ACTION, *, issued=None, expires=None, duration=60, observations=200):
-    issued = issued or datetime(2026, 10, 19, 12, tzinfo=timezone.utc)
-    expires = expires or issued + timedelta(minutes=10)
-    return {
-        'schema': m.APPROVAL_SCHEMA,
-        'approval_id': 'synthetic-m27b-test',
-        'device': m.TARGET_DEVICE,
-        'approved_actions': [action],
-        'issued_at_utc': issued.isoformat(),
-        'expires_at_utc': expires.isoformat(),
-        'max_duration_seconds': duration,
-        'max_observations': observations,
-    }
 
 
 def discovery(paths=()):
@@ -41,6 +28,143 @@ def discovery(paths=()):
 
 
 class CamxProviderOfflineTests(unittest.TestCase):
+    def setUp(self):
+        self.target_env = patch.dict(os.environ, {m.TARGET_SERIAL_ENV: TEST_TARGET})
+        self.target_env.start()
+        self.target_hash = patch.object(
+            m, 'TARGET_SERIAL_SHA256', hashlib.sha256(TEST_TARGET.encode('utf-8')).hexdigest(),
+        )
+        self.target_hash.start()
+
+    def tearDown(self):
+        self.target_hash.stop()
+        self.target_env.stop()
+
+    def test_owner_authorized_target_and_connect_are_exactly_pinned(self):
+        selector = m.device_selector()
+        self.assertEqual(selector, ['-s', TEST_TARGET])
+        self.assertTrue(m.allowed_adb_arguments(
+            ['connect', TEST_TARGET], selector, (), Path('.')))
+        self.assertFalse(m.allowed_adb_arguments(
+            ['connect', 'other-m27b-test.invalid:5555'], selector, (), Path('.')))
+        self.assertFalse(m.allowed_adb_arguments(
+            ['connect', TEST_TARGET, 'other'], selector, (), Path('.')))
+        self.assertTrue(m.allowed_adb_arguments(
+            [*selector, 'get-state'], selector, (), Path('.')))
+        self.assertFalse(m.allowed_adb_arguments(
+            ['-s', 'another-target:5555', 'get-state'],
+            ['-s', 'another-target:5555'], (), Path('.')))
+
+    def test_owner_authorized_collection_connects_then_checks_state_and_identity(self):
+        selector = m.device_selector()
+        calls = []
+
+        def executor(argv, *, timeout, stage):
+            self.assertTrue(m.allowed_adb_arguments(argv, selector, (), stage), argv)
+            calls.append(tuple(argv))
+            if argv == ['connect', TEST_TARGET]:
+                return f'connected to {TEST_TARGET}\n'
+            cmd = argv[len(selector):]
+            if cmd == ['get-state']:
+                return 'device\n'
+            if len(cmd) == 3 and cmd[:2] == ['shell', 'getprop']:
+                return m.EXPECTED_PROPERTIES[cmd[2]] + '\n'
+            if cmd == ['shell', 'sh', '-c', m.SH_DISCOVERY_ARGUMENT]:
+                return discovery()
+            self.fail(f'unexpected synthetic ADB vector: {argv!r}')
+
+        with tempfile.TemporaryDirectory() as td:
+            report = m.collect_provider(
+                selector, Path(td), executor=executor,
+                metadata_reader=lambda path, timeout=20: {},
+                owner_authorized=True,
+                monotonic_fn=lambda: 0.0,
+            )
+
+        self.assertEqual(report['status'], 'BLOCKED_NO_PROVIDER')
+        self.assertEqual(report['authorization_mode'], 'OWNER_AUTHORIZED_DIRECT_INSTRUCTION')
+        self.assertEqual(report['target_serial'], TEST_TARGET)
+        self.assertEqual(report['connection_status'], 'CONNECTED')
+        self.assertEqual(calls[:2], [
+            ('connect', TEST_TARGET), (*selector, 'get-state'),
+        ])
+        self.assertEqual(report['adb_command_count'], len(calls))
+
+    def test_owner_authorized_cli_needs_no_approval_tty_or_confirmation_token(self):
+        class NonInteractiveInput(io.StringIO):
+            def isatty(self):
+                return False
+
+        captured = {}
+        report = {'status': 'BLOCKED_NO_PROVIDER'}
+
+        def collect(selector, stage, **kwargs):
+            captured['selector'] = selector
+            captured['stage'] = stage
+            captured.update(kwargs)
+            return report
+
+        with patch.object(m.sys, 'stdin', NonInteractiveInput()), \
+             patch.object(m, 'resolve_adb_executable', return_value=Path('pinned-adb.exe')) as resolve, \
+             patch.object(m, 'collect_provider', side_effect=collect) as collect_mock, \
+             patch.object(m, 'build_zip', return_value=b'synthetic package'), \
+             patch.object(m, 'canonical_commit', return_value={'status': 'BLOCKED_NO_PROVIDER'}):
+            self.assertEqual(m.main(['--owner-authorized-run']), 1)
+
+        resolve.assert_called_once_with()
+        collect_mock.assert_called_once()
+        self.assertEqual(captured['selector'], ['-s', TEST_TARGET])
+        self.assertIs(captured['owner_authorized'], True)
+        self.assertNotIn('approval', captured)
+        self.assertNotIn('confirmation_response', captured)
+
+    def test_unattended_mode_rejects_missing_mode_without_resolving_adb(self):
+        with patch.object(m, 'resolve_adb_executable', side_effect=AssertionError('must not resolve ADB')):
+            self.assertEqual(m.main([]), 2)
+
+    def test_cli_rejects_user_selected_serial_transport_and_approval_files(self):
+        for arguments in (
+            ['--owner-authorized-run', '--serial', TEST_TARGET],
+            ['--owner-authorized-run', '--transport-id', '42'],
+            ['--owner-authorized-run', '--approval-file', 'not-read.json'],
+        ):
+            with self.subTest(arguments=arguments), \
+                 patch.object(m, 'resolve_adb_executable', side_effect=AssertionError('must not resolve ADB')):
+                with self.assertRaises(SystemExit) as raised:
+                    m.main(arguments)
+                self.assertEqual(raised.exception.code, 2)
+
+    def test_connect_output_must_confirm_exact_target(self):
+        self.assertEqual(
+            m.parse_connect_output(f'connected to {TEST_TARGET}\r\n'),
+            'CONNECTED',
+        )
+        self.assertEqual(
+            m.parse_connect_output(f'already connected to {TEST_TARGET}\n'),
+            'ALREADY_CONNECTED',
+        )
+        for raw in ('connected to other-m27b-test.invalid:5555\n', 'failed to connect\n',
+                    f'connected to {TEST_TARGET}\nextra\n'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                m.parse_connect_output(raw)
+        with self.assertRaisesRegex(ValueError, 'ADB_CONNECT_AUTHENTICATION_FAILED'):
+            m.parse_connect_output(f'failed to authenticate to {TEST_TARGET}\n')
+        with self.assertRaisesRegex(ValueError, 'ADB_CONNECT_FAILED'):
+            m.parse_connect_output(f'failed to connect to {TEST_TARGET}\n')
+        with self.assertRaisesRegex(ValueError, 'ADB_CONNECT_REFUSED'):
+            m.parse_connect_output(
+                f'cannot connect to {TEST_TARGET}: No connection could be made because the target machine actively refused it. (10061)\n',
+            )
+
+    def test_connect_diagnostic_redacts_target_and_bounds_output(self):
+        preview = m.redacted_connect_output_preview(
+            f'connected to {TEST_TARGET} extra other-m27b-test.invalid:5555\n' + ('x' * 500),
+            TEST_TARGET,
+        )
+        self.assertNotIn(TEST_TARGET, preview)
+        self.assertNotIn('other-m27b-test.invalid:5555', preview)
+        self.assertLessEqual(len(preview), 256)
+
     def test_discovery_parser_preserves_all_paths_and_root_status(self):
         paths = ['/system/lib64/camx_core.so', '/vendor/lib64/hw/camx_core.so']
         parsed = m.parse_discovery_output(discovery(paths))
@@ -100,7 +224,7 @@ class CamxProviderOfflineTests(unittest.TestCase):
                 m.parse_remote_size(raw, path)
 
     def test_size_allowlist_accepts_only_observed_candidate_source(self):
-        selector = m.device_selector(transport_id='42')
+        selector = m.device_selector()
         observed = [{'observed_path': '/vendor/lib64/camx_core.so',
                      'source_path': '/vendor/lib64/libcamx_core.so.1'}]
         self.assertTrue(m.allowed_adb_arguments(
@@ -167,7 +291,7 @@ Dynamic section at offset 0x100 contains 1 entry:
         self.assertIn('CSLRegisterMessageHandler', metadata['bridge_symbol_hits'])
 
     def test_exact_native_allowlist_rejects_unrelated_shell_and_unobserved_path(self):
-        selector = m.device_selector(serial='synthetic-pico-serial-01')
+        selector = m.device_selector()
         with tempfile.TemporaryDirectory() as td:
             stage = Path(td)
             candidate = '/vendor/lib64/camx_core.so'
@@ -177,15 +301,14 @@ Dynamic section at offset 0x100 contains 1 entry:
                 [*selector, 'shell', 'su', '-c', 'id'], selector, [candidate], stage))
             self.assertFalse(m.allowed_adb_arguments(
                 [*selector, 'shell', 'sha256sum', '/system/lib64/other.so'], selector, [candidate], stage))
-        transport = m.device_selector(transport_id='42')
-        self.assertEqual(transport, ['-t', '42'])
-        self.assertTrue(m.allowed_adb_arguments([*transport, 'get-state'], transport, (), Path('.')))
         self.assertFalse(m.allowed_adb_arguments(
-            ['-s', 'first', '-s', 'second', 'get-state'],
-            ['-s', 'first', '-s', 'second'], (), Path('.')))
+            ['-t', '42', 'get-state'], ['-t', '42'], (), Path('.')))
+        self.assertFalse(m.allowed_adb_arguments(
+            ['-s', 'other-m27b-test.invalid:5555', 'get-state'],
+            ['-s', 'other-m27b-test.invalid:5555'], (), Path('.')))
 
-    def test_transport_id_allowlist_accepts_exact_candidate_vectors_only(self):
-        selector = m.device_selector(transport_id='42')
+    def test_fixed_serial_allowlist_accepts_exact_candidate_vectors_only(self):
+        selector = m.device_selector()
         alias = '/vendor/lib64/camx_core.so'
         source = '/vendor/lib64/libcamx_core.so.1'
         candidates = [{'observed_path': alias, 'source_path': source}]
@@ -193,19 +316,20 @@ Dynamic section at offset 0x100 contains 1 entry:
             stage = Path(td)
             destination = m.destination_for(stage, alias)
             allowed = (
-                ['-t', '42', 'get-state'],
-                ['-t', '42', 'shell', 'getprop', 'ro.build.fingerprint'],
-                ['-t', '42', 'shell', 'sh', '-c', m.SH_DISCOVERY_ARGUMENT],
-                ['-t', '42', 'shell', 'readlink', '-f', alias],
-                ['-t', '42', 'shell', 'wc', '-c', source],
-                ['-t', '42', 'shell', 'sha256sum', source],
-                ['-t', '42', 'pull', source, str(destination)],
+                ['connect', TEST_TARGET],
+                [*selector, 'get-state'],
+                [*selector, 'shell', 'getprop', 'ro.build.fingerprint'],
+                [*selector, 'shell', 'sh', '-c', m.SH_DISCOVERY_ARGUMENT],
+                [*selector, 'shell', 'readlink', '-f', alias],
+                [*selector, 'shell', 'wc', '-c', source],
+                [*selector, 'shell', 'sha256sum', source],
+                [*selector, 'pull', source, str(destination)],
             )
             for vector in allowed:
                 with self.subTest(vector=vector):
                     self.assertTrue(m.allowed_adb_arguments(vector, selector, candidates, stage))
             self.assertFalse(m.allowed_adb_arguments(
-                ['-t', '42', 'shell', 'wc', '-c', '/vendor/lib64/unobserved.so'],
+                [*selector, 'shell', 'wc', '-c', '/vendor/lib64/unobserved.so'],
                 selector, candidates, stage,
             ))
 
@@ -235,7 +359,7 @@ Dynamic section at offset 0x100 contains 1 entry:
         paths = ['/system/lib64/camx_core.so', '/vendor/lib64/camx_core.so']
         data = elf64()
         digest = hashlib.sha256(data).hexdigest()
-        selector = m.device_selector(serial='synthetic-pico-serial-01')
+        selector = m.device_selector()
         calls = []
         metadata = {'build_id': 'ab' * 20, 'exported_symbols': ['CSLRegisterMessageHandler'],
                     'undefined_symbols': ['ioctl'], 'dt_needed': ['libcamx_utils.so'],
@@ -245,6 +369,8 @@ Dynamic section at offset 0x100 contains 1 entry:
         def executor(argv, *, timeout, stage):
             self.assertTrue(m.allowed_adb_arguments(argv, selector, paths, stage), argv)
             calls.append(tuple(argv))
+            if argv == ['connect', TEST_TARGET]:
+                return f'connected to {TEST_TARGET}\n'
             cmd = argv[len(selector):]
             if cmd == ['get-state']:
                 return 'device\n'
@@ -267,30 +393,29 @@ Dynamic section at offset 0x100 contains 1 entry:
 
         with tempfile.TemporaryDirectory() as td:
             stage = Path(td)
-            with patch.object(m, 'check_hardware_execution_gate', wraps=m.check_hardware_execution_gate) as gate:
-                report = m.collect_provider(
-                    approval(), 'yes', selector, stage, executor=executor,
-                    metadata_reader=lambda path, timeout=20: metadata,
-                    direct_user_instruction=True,
-                    now_utc_fn=lambda: datetime(2026, 10, 19, 12, 1, tzinfo=timezone.utc),
-                    monotonic_fn=lambda: 0.0,
-                )
+            report = m.collect_provider(
+                selector, stage, executor=executor,
+                metadata_reader=lambda path, timeout=20: metadata,
+                owner_authorized=True, monotonic_fn=lambda: 0.0,
+            )
             self.assertEqual(report['status'], 'PACKAGE_READY', report)
             self.assertEqual([f['observed_path'] for f in report['files']], paths)
-            self.assertNotIn('synthetic-pico-serial-01', json.dumps(report))
+            self.assertEqual(report['target_serial'], TEST_TARGET)
             self.assertEqual([f['sha256'] for f in report['files']], [digest, digest])
             self.assertEqual([f['bytes'] for f in report['files']], [len(data), len(data)])
             self.assertEqual([f['elf']['build_id'] for f in report['files']], ['ab' * 20] * 2)
-            self.assertEqual(gate.call_count, len(calls))
+            self.assertEqual(report['adb_command_count'], len(calls))
 
     def test_total_size_limit_blocks_all_pulls_before_arbitrary_candidate_selection(self):
         paths = ['/system/lib64/camx_core.so', '/vendor/lib64/camx_core.so',
                  '/odm/lib64/camx_core.so']
-        selector = m.device_selector(serial='synthetic-pico-serial-01')
+        selector = m.device_selector()
         calls = []
         def executor(argv, *, timeout, stage):
             self.assertTrue(m.allowed_adb_arguments(argv, selector, paths, stage), argv)
             calls.append(tuple(argv))
+            if argv == ['connect', TEST_TARGET]:
+                return f'connected to {TEST_TARGET}\n'
             cmd = argv[len(selector):]
             if cmd == ['get-state']:
                 return 'device\n'
@@ -303,25 +428,27 @@ Dynamic section at offset 0x100 contains 1 entry:
             self.fail(f'unexpected synthetic ADB vector: {argv!r}')
         with tempfile.TemporaryDirectory() as td:
             report = m.collect_provider(
-                approval(), 'yes', selector, Path(td), executor=executor,
-                metadata_reader=lambda path, timeout=20: {}, direct_user_instruction=True,
-                now_utc_fn=lambda: datetime(2026, 10, 19, 12, 1, tzinfo=timezone.utc),
+                selector, Path(td), executor=executor,
+                metadata_reader=lambda path, timeout=20: {}, owner_authorized=True,
                 monotonic_fn=lambda: 0.0,
             )
         self.assertEqual(report['status'], 'BLOCKED_LIMIT_REACHED')
         self.assertEqual(report['errors'][-1]['code'], 'TOTAL_PROVIDER_SIZE_LIMIT')
-        self.assertFalse(any(call[len(selector)] == 'pull' for call in calls))
+        self.assertFalse(any(call[:len(selector)] == tuple(selector)
+                             and call[len(selector)] == 'pull' for call in calls))
         self.assertEqual(report['candidates'], [
             {'observed_path': path, 'source_path': path} for path in paths
         ])
 
     def test_single_file_size_limit_blocks_pull(self):
         path = '/vendor/lib64/camx_core.so'
-        selector = m.device_selector(serial='synthetic-device')
+        selector = m.device_selector()
         calls = []
         def executor(argv, *, timeout, stage):
             self.assertTrue(m.allowed_adb_arguments(argv, selector, [path], stage), argv)
             calls.append(tuple(argv))
+            if argv == ['connect', TEST_TARGET]:
+                return f'connected to {TEST_TARGET}\n'
             cmd = argv[len(selector):]
             if cmd == ['get-state']:
                 return 'device\n'
@@ -334,30 +461,28 @@ Dynamic section at offset 0x100 contains 1 entry:
             self.fail(f'unexpected synthetic ADB vector: {argv!r}')
         with tempfile.TemporaryDirectory() as td:
             report = m.collect_provider(
-                approval(), 'yes', selector, Path(td), executor=executor,
-                metadata_reader=lambda candidate, timeout=20: {}, direct_user_instruction=True,
-                now_utc_fn=lambda: datetime(2026, 10, 19, 12, 1, tzinfo=timezone.utc),
+                selector, Path(td), executor=executor,
+                metadata_reader=lambda candidate, timeout=20: {}, owner_authorized=True,
                 monotonic_fn=lambda: 0.0,
             )
         self.assertEqual(report['status'], 'BLOCKED_LIMIT_REACHED')
         self.assertEqual(report['errors'][-1]['code'], 'PROVIDER_FILE_SIZE_LIMIT')
-        self.assertFalse(any(call[len(selector)] == 'pull' for call in calls))
+        self.assertFalse(any(call[:len(selector)] == tuple(selector)
+                             and call[len(selector)] == 'pull' for call in calls))
 
-    def test_missing_or_invalid_approval_and_confirmation_never_call_executor(self):
-        selector = m.device_selector(serial='synthetic-pico-serial-01')
+    def test_missing_owner_authorization_or_wrong_target_never_calls_executor(self):
+        selector = m.device_selector()
         with tempfile.TemporaryDirectory() as td:
-            for approval_obj, confirmation, direct in (
-                (None, 'yes', True),
-                (approval(action='different-action'), 'yes', True),
-                (approval(), 'YES', True),
-                (approval(), 'yes', False),
+            for selected, authorized in (
+                (selector, False),
+                (['-s', 'other-m27b-test.invalid:5555'], True),
+                (['-t', '42'], True),
             ):
                 calls = []
                 report = m.collect_provider(
-                    approval_obj, confirmation, selector, Path(td),
+                    selected, Path(td),
                     executor=lambda *a, **k: calls.append(a),
-                    metadata_reader=lambda path, timeout=20: {}, direct_user_instruction=direct,
-                    now_utc_fn=lambda: datetime(2026, 10, 19, 12, 1, tzinfo=timezone.utc),
+                    metadata_reader=lambda path, timeout=20: {}, owner_authorized=authorized,
                     monotonic_fn=lambda: 0.0,
                 )
                 self.assertNotEqual(report['status'], 'PACKAGE_READY')
@@ -369,11 +494,13 @@ Dynamic section at offset 0x100 contains 1 entry:
             ('ro.product.cpu.abi', 'armeabi-v7a', 'BLOCKED_ABI_MISMATCH'),
             ('ro.product.device', 'PICOOTHER', 'BLOCKED_UNEXPECTED_DEVICE'),
         ):
-            selector = m.device_selector(serial='synthetic-pico-serial-01')
+            selector = m.device_selector()
             calls = []
             def executor(argv, *, timeout, stage):
                 self.assertTrue(m.allowed_adb_arguments(argv, selector, (), stage), argv)
                 calls.append(tuple(argv))
+                if argv == ['connect', TEST_TARGET]:
+                    return f'connected to {TEST_TARGET}\n'
                 cmd = argv[len(selector):]
                 if cmd == ['get-state']:
                     return 'device\n'
@@ -382,34 +509,53 @@ Dynamic section at offset 0x100 contains 1 entry:
                 return (wrong_value if key == mismatch_key else value) + '\n'
             with tempfile.TemporaryDirectory() as td:
                 report = m.collect_provider(
-                    approval(), 'yes', selector, Path(td), executor=executor,
-                    metadata_reader=lambda path, timeout=20: {}, direct_user_instruction=True,
-                    now_utc_fn=lambda: datetime(2026, 10, 19, 12, 1, tzinfo=timezone.utc),
+                    selector, Path(td), executor=executor,
+                    metadata_reader=lambda path, timeout=20: {}, owner_authorized=True,
                     monotonic_fn=lambda: 0.0,
                 )
             self.assertEqual(report['status'], expected_status)
             self.assertFalse(any(call[len(selector):len(selector) + 3] == ('shell', 'sh', '-c')
                                  for call in calls))
-            self.assertEqual(len(calls), 1 + len(m.EXPECTED_PROPERTIES))
+            self.assertEqual(len(calls), 2 + len(m.EXPECTED_PROPERTIES))
 
-    def test_expired_approval_mid_run_stops_before_next_adb_command(self):
-        selector = m.device_selector(serial='synthetic-pico-serial-01')
+    def test_collection_rejects_unexpected_connect_output_before_target_selection(self):
+        selector = m.device_selector()
         calls = []
-        valid_now = datetime(2026, 10, 19, 12, 1, tzinfo=timezone.utc)
-        expired_now = datetime(2026, 10, 19, 12, 11, tzinfo=timezone.utc)
-        times = iter([valid_now, expired_now])
         def executor(argv, *, timeout, stage):
             self.assertTrue(m.allowed_adb_arguments(argv, selector, (), stage), argv)
             calls.append(tuple(argv))
-            return 'device\n'
+            return 'connected to other-m27b-test.invalid:5555\n'
         with tempfile.TemporaryDirectory() as td:
             report = m.collect_provider(
-                approval(), 'yes', selector, Path(td), executor=executor,
-                metadata_reader=lambda path, timeout=20: {}, direct_user_instruction=True,
-                now_utc_fn=lambda: next(times), monotonic_fn=lambda: 0.0,
+                selector, Path(td), executor=executor,
+                metadata_reader=lambda path, timeout=20: {}, owner_authorized=True,
+                monotonic_fn=lambda: 0.0,
             )
-        self.assertEqual(report['status'], 'BLOCKED_EXPIRED')
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(report['status'], 'BLOCKED_CONNECT_OUTPUT')
+        self.assertEqual(report['errors'][-1]['code'], 'ADB_CONNECT_OUTPUT_UNEXPECTED')
+        self.assertEqual(report['connection_diagnostic']['raw_output_saved'], False)
+        self.assertEqual(calls, [('connect', TEST_TARGET)])
+
+    def test_collection_classifies_refused_tcp_before_any_device_command(self):
+        selector = m.device_selector()
+        calls = []
+        def executor(argv, *, timeout, stage):
+            self.assertTrue(m.allowed_adb_arguments(argv, selector, (), stage), argv)
+            calls.append(tuple(argv))
+            return (
+                f'cannot connect to {TEST_TARGET}: No connection could be made because '
+                'the target machine actively refused it. (10061)\n'
+            )
+        with tempfile.TemporaryDirectory() as td:
+            report = m.collect_provider(
+                selector, Path(td), executor=executor,
+                metadata_reader=lambda path, timeout=20: {}, owner_authorized=True,
+                monotonic_fn=lambda: 0.0,
+            )
+        self.assertEqual(report['status'], 'BLOCKED_ADB_CONNECT_REFUSED')
+        self.assertEqual(report['errors'][-1]['code'], 'ADB_CONNECT_REFUSED')
+        self.assertNotIn(TEST_TARGET, report['connection_diagnostic']['redacted_preview'])
+        self.assertEqual(calls, [('connect', TEST_TARGET)])
 
     def test_dry_run_plan_is_device_free(self):
         plan = m.dry_run_plan()
@@ -422,43 +568,6 @@ Dynamic section at offset 0x100 contains 1 entry:
              patch.object(m, 'native_adb_executor', side_effect=AssertionError('must not create ADB executor')):
             self.assertEqual(m.main(['--dry-run']), 0)
         self.assertIn('DRY_RUN_ONLY', output.getvalue())
-
-    def test_cli_requires_interactive_exact_yes_before_resolving_adb(self):
-        class InteractiveInput(io.StringIO):
-            def isatty(self):
-                return True
-        class NonInteractiveInput(io.StringIO):
-            def isatty(self):
-                return False
-
-        for response in ('no', '', 'YES', 'yes '):
-            with self.subTest(response=response), \
-                 patch.object(m.sys, 'stdin', InteractiveInput()), \
-                 patch.object(m, '_load_approval', return_value=approval()), \
-                 patch.object(m, 'resolve_adb_executable', side_effect=AssertionError('must not resolve ADB')):
-                self.assertEqual(m.main([
-                    '--approval-file', 'synthetic-approval.json', '--transport-id', '42',
-                ], input_fn=lambda _: response), 2)
-
-        with patch.object(m.sys, 'stdin', NonInteractiveInput()), \
-             patch.object(m, '_load_approval', return_value=approval()), \
-             patch.object(m, 'resolve_adb_executable', side_effect=AssertionError('must not resolve ADB')):
-            self.assertEqual(m.main([
-                '--approval-file', 'synthetic-approval.json', '--transport-id', '42',
-            ], input_fn=lambda _: 'yes'), 2)
-
-        blocked_report = {'status': 'PACKAGE_READY'}
-        with patch.object(m.sys, 'stdin', InteractiveInput()), \
-             patch.object(m, '_load_approval', return_value=approval()), \
-             patch.object(m, 'resolve_adb_executable', return_value=Path('pinned-adb.exe')), \
-             patch.object(m, 'collect_provider', return_value=blocked_report) as collect, \
-             patch.object(m, 'build_zip', return_value=b'synthetic package'), \
-             patch.object(m, 'canonical_commit', return_value={'status': 'PACKAGE_READY'}):
-            self.assertEqual(m.main([
-                '--approval-file', 'synthetic-approval.json', '--transport-id', '42',
-            ], input_fn=lambda _: 'yes'), 0)
-            self.assertEqual(collect.call_count, 1)
-
 
 if __name__ == '__main__':
     unittest.main()

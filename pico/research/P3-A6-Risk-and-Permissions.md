@@ -210,3 +210,17 @@ python .\pico\tools\p3a_m27b_camx_provider.py --approval-file "$env:LOCALAPPDATA
 ```
 
 Final offline review tightened publisher handling: unsafe names and pre-existing final/temporary paths fail closed; `.part` files are created exclusively and only temporary files created by the current call are cleaned after an error. A repeated name cannot replace previously published artifacts. This was verified with local synthetic files only; no SMB read-back occurred. The implementation does not claim protection against a hostile concurrent writer with permission to mutate the canonical share between filesystem operations, so existing share ACLs remain part of the trust boundary. M2.7A remains **offline preparation GO**; M2.7B remains **NOT AUTHORIZED / NOT RUN**.
+
+## M2.7B owner-authorized execution outcome (2026-10-19)
+
+The M2.7B request in the current task directly authorized this one bounded read-only acquisition. The runner was changed to require explicit `--owner-authorized-run`, bind only one digest-pinned serial supplied through a process-local environment variable, and use the pinned SDK ADB executable. It no longer reads approval JSON or asks for `yes`; the report records the distinct `OWNER_AUTHORIZED_DIRECT_INSTRUCTION` mode and states that it is not cryptographic attestation. The CLI mode is not a reusable authorization: any later run requires fresh direct owner authorization. This M2.7B change does not add the raw endpoint to its runner/tests/docs; pre-existing legacy ADB defaults elsewhere in the project were left untouched.
+
+| Operation | Access / risk | Observed outcome |
+|---|---|---|
+| Fixed `adb connect` | Host network connection to one explicitly pinned ADB endpoint; establishes an ADB transport if available. No device-side setting or service command is issued. | Three bounded attempts all received TCP connection refused (Windows 10061). No device command was reached. |
+| Selected `get-state` and six fixed `getprop` calls | Ordinary ADB shell read; could reveal software identity. | `NOT RUN`; connect failed first. |
+| Fixed library-root `find` / `readlink` / `wc` / `sha256sum` | Unprivileged shell filesystem metadata/read; recursive scan and hashing can add bounded IO. | `NOT RUN`; no paths or candidates observed. |
+| `adb pull` and local `llvm-readelf` | Reads only discovered library candidates and performs bounded host-side parsing. | `NOT RUN`; no provider bytes. |
+| Canonical private publication | Host write access to canonical SMB; exact readback, ZIP/manifest then sidecar last. | Three BLOCKED diagnostic packages independently read back and verified; no `.part` remnants. Details are in the M2.7B result report. |
+
+The runner's target-binding digest is an exact allowlist guard, not owner authentication. The direct authorization is contextual and limited to the current task. No root, SELinux bypass, alternate transport, `/proc`, process memory, camera, image/video, tracing, installation, firmware or Lighthouse operation was used. Because the endpoint refused TCP connections on all three immediate attempts, the session stopped rather than trying another transport or broadening commands. The prior M2.7A `NOT AUTHORIZED / NOT RUN` statement is historical; the current M2.7B attempt was authorized and is now `BLOCKED`.
