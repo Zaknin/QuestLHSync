@@ -437,6 +437,35 @@ try {
         Assert-Equal $budgetEvidence.sources.dev.status 'LIMIT_REACHED' 'Unqueried source receives explicit limit status'
     } finally {if(Test-Path -LiteralPath $budgetRoot){Remove-Item -LiteralPath $budgetRoot -Recurse -Force}}
 
+    # Each source may inspect 16 nodes while sharing the approved overall observation budget.
+    $sixteenSysfsLines=[Collections.Generic.List[string]]::new();$sixteenDevLines=[Collections.Generic.List[string]]::new()
+    for($i=0;$i -lt 16;$i++){
+        $node="video$i"
+        $sixteenSysfsLines.Add("P3A6M2`tSYSFS_NODE`t$node`tname`tOBSERVED`tSynthetic Camera $i")
+        $sixteenSysfsLines.Add("P3A6M2`tSYSFS_NODE`t$node`tindex`tOBSERVED`t$i")
+        $sixteenSysfsLines.Add("P3A6M2`tSYSFS_NODE`t$node`tdev`tOBSERVED`t81:$i")
+        $sixteenDevLines.Add("P3A6M2`tDEV_NODE`t$node`tOBSERVED`tOK`tcrw-rw----`t1000`t1000`t81:$i")
+    }
+    $sixteenSysfsText=($sixteenSysfsLines -join "`n")+"`nP3A6M2`tSYSFS_SOURCE`tOBSERVED`n"
+    $sixteenDevText=($sixteenDevLines -join "`n")+"`nP3A6M2`tDEV_SOURCE`tOBSERVED`n"
+    $allocationVectors=[Collections.Generic.List[object]]::new();$allocationResponses=[Collections.Generic.List[string]]::new()
+    foreach($i in 0..7){$allocationVectors.Add($expectedVectors[$i]);$allocationResponses.Add($responses[$i])}
+    $allocationVectors.Add($expectedVectors[8]);$allocationResponses.Add($sixteenSysfsText)
+    $allocationVectors.Add($expectedVectors[9]);$allocationResponses.Add($sixteenDevText)
+    $allocationMock=New-StrictMockExecutor $allocationVectors.ToArray() $allocationResponses.ToArray()
+    $allocationRoot=Join-Path $env:LOCALAPPDATA ('PicoLHSync\M2-node-budget-allocation-'+[guid]::NewGuid().ToString('N'))
+    try {
+        $allocationResult=Invoke-P3A6M2ConfirmedInventory -Approval (New-TestApproval -Observations 40) -Response yes -Interactive $true -AdbExecutor $allocationMock.Executor -OutputRoot $allocationRoot
+        Assert-Equal $allocationResult.collection_status 'COMPLETE' '16 sysfs plus 16 /dev nodes complete within the shared budget of 40'
+        Assert-Equal $allocationResult.observation_count 32 'Both sources retain their full 16-node allowance'
+        Assert-Equal $allocationResult.adb_command_count 10 'Both source probes run after the identity and build queries'
+        Assert-Equal $allocationMock.State.index 10 'The strict native-allowlisted mock accepts both exact 16-node probes'
+        $allocationEvidence=Get-Content -LiteralPath (Join-Path $allocationResult.evidence_directory 'evidence.json') -Raw | ConvertFrom-Json -AsHashtable
+        Assert-Equal $allocationEvidence.sources.sysfs.status 'OBSERVED' 'Sysfs source is not artificially limited after 16 nodes'
+        Assert-Equal $allocationEvidence.sources.dev.status 'OBSERVED' '/dev source is not artificially limited by a halved remainder'
+        Assert-True ($allocationEvidence.sources.sysfs.nodes.Count -eq 16 -and $allocationEvidence.sources.dev.nodes.Count -eq 16 -and $allocationEvidence.observation_count -eq 32) 'Evidence contains 16 nodes from each source and no LIMIT_REACHED status'
+    } finally {if(Test-Path -LiteralPath $allocationRoot){Remove-Item -LiteralPath $allocationRoot -Recurse -Force}}
+
     # Transport selection preserves every argument boundary, including the adb shell script.
     $transportVectors=@();foreach($vector in $expectedVectors.ToArray()){$transportVectors+=,[string[]](@('-t','42')+[string[]]$vector)}
     $transportStrict=New-StrictMockExecutor $transportVectors $responses.ToArray()

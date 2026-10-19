@@ -26,9 +26,17 @@ PowerShell harness запускает неизменённые production probe 
 
 Mock ADB responder сравнивает каждый элемент точного string-array vector и сначала пропускает его через production native allowlist. Проверены default transport и `-t 42`, шесть exact properties, build/release/kernel, оба shell probes, identity mismatch stop, budget/timeout failure, private archive/hash, а также missing/expired/wrong-scope approvals и все отказные confirmation paths. Все synthetic approval objects создаются только в памяти теста; approval file не пишется.
 
-Финальная offline проверка: PowerShell M2 harness **336 assertions PASS**; `python -m unittest discover -s pico/tests -v` — **201/201 PASS**; прямой M1 PowerShell harness — **29/29 PASS**; legacy WSL POSIX integration — **PASS**; `git diff --check` — **PASS** (Git сообщил только стандартное LF/CRLF normalization warning). Synthetic evidence не является результатом на Pico. В полном Python suite M2 runner действительно запускается с mock output; отдельный dry-run test проверяет отсутствие ADB-вызовов.
+## M2.1 — исправление node-budget allocation
 
-SHA-256 исходников этой offline реализации: module `13b205450eff7cff47e5381cca4e5c3f7321b630e214f24f3ec16b5590deecd4`; runner `63ed273c01de3bbb098773546b2cadbd803e6d5a7d8d31c4c0e4297b20358066`. Точные probe hashes приведены ниже.
+В baseline `7e7b8cd5c628540584dd732e691b27f91885221e` static audit обнаружил, что probe budget делился пополам между источниками: после 16 sysfs nodes при общем лимите 40 `/dev` probe получал искусственный предел 12. Расчёт исправлен на `min(16, remainingBudget)`. Каждый источник теперь может использовать до 16 записей, а общий approval budget продолжает ограничивать суммарные observations.
+
+Добавлена regression, исполняющая collector с точными vectors через production native allowlist и strict mock output: 16 валидных sysfs nodes плюс 16 валидных `/dev` nodes дают `COMPLETE`, 32 observations и `OBSERVED` для обоих источников; искусственного `LIMIT_REACHED` нет. Успешная regression ранее падала (`PARTIAL_ADB_ERROR`) из-за vector с лимитом 12. Существующие проверки реального overflow выше 16 nodes, исчерпанного общего observation budget, пустых источников, malformed protocol и partial per-source status сохранены.
+
+M2.1 offline verification: PowerShell M2 harness **353 assertions PASS**; `python -m unittest discover -s pico/tests -v` — **201/201 PASS**; прямой M1 PowerShell harness — **29/29 PASS**; WSL POSIX integration — **PASS**; `git diff --check` — **PASS**. Все проверки synthetic/local; ADB client/server, approval file, Pico и camera services не использовались.
+
+Synthetic evidence не является результатом на Pico. В полном Python suite M2 runner действительно запускается с mock output; отдельный dry-run test проверяет отсутствие ADB-вызовов.
+
+SHA-256 исходников этой offline реализации: module `d5a31a97933185a92ac66277a1a9d941358491858a15eccabbf1d16e9bc45dda`; runner `63ed273c01de3bbb098773546b2cadbd803e6d5a7d8d31c4c0e4297b20358066`. Точные probe hashes приведены ниже; production probe templates не менялись.
 
 ## Probe source hashes
 

@@ -569,7 +569,7 @@ function Invoke-P3A6M2Inventory {
         foreach ($source in @('sysfs','dev')) {
             if ($started.ElapsedMilliseconds -ge $deadline) { throw 'M2_TIMEOUT' }
             if ($remainingBudget -le 0) { $observation.sources[$source].status='LIMIT_REACHED'; continue }
-            $sourceLimit=[Math]::Min(16,[Math]::Ceiling($remainingBudget / 2.0))
+            $sourceLimit=[Math]::Min(16,$remainingBudget)
             $probe=Get-P3A6M2ProbeScript -Source $source -NodeLimit $sourceLimit
             $observation.sources[$source].script_sha256=Get-P3A6M2TextSha256 -Text $probe
             $quoted=ConvertTo-P3A6M2PosixArgument -Value $probe
