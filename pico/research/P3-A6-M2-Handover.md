@@ -36,7 +36,23 @@ M2.1 offline verification: PowerShell M2 harness **353 assertions PASS**; `pytho
 
 Synthetic evidence не является результатом на Pico. В полном Python suite M2 runner действительно запускается с mock output; отдельный dry-run test проверяет отсутствие ADB-вызовов.
 
-SHA-256 исходников этой offline реализации: module `d5a31a97933185a92ac66277a1a9d941358491858a15eccabbf1d16e9bc45dda`; runner `63ed273c01de3bbb098773546b2cadbd803e6d5a7d8d31c4c0e4297b20358066`. Точные probe hashes приведены ниже; production probe templates не менялись.
+SHA-256 модуля для M2.1 revision: `d5a31a97933185a92ac66277a1a9d941358491858a15eccabbf1d16e9bc45dda`; runner `63ed273c01de3bbb098773546b2cadbd803e6d5a7d8d31c4c0e4297b20358066`. Точные probe hashes приведены ниже; production probe templates не менялись.
+
+## M2.2 — Android ADB output compatibility и parser diagnostics
+
+M2.2 исходил из commit `db3f95bc5fb1335c200deb37d28a209f5b246be1` в branch `feature/pico-support`.
+
+Локально проверена указанная private evidence directory. В `evidence.json` указаны `PARTIAL_UNEXPECTED_OUTPUT`, 9 ADB commands и 0 observations; source statuses остались `NOT_OBSERVED`. Evidence не содержит raw stdout или parser error code, поэтому по ней нельзя подтвердить, что аппаратный stdout имел CRLF, либо установить другую точную parser rejection. Private evidence не копировалась и не публиковалась.
+
+Статически подтверждено, что прежний parser безусловно отвергал любой `CR` до разбора строк. Это могло отклонить корректный CRLF output, но в данном hardware incident остаётся гипотезой. Другой определённый источник отказа на девятой команде при доступной evidence/source review не установлен. Новая версия классифицирует line endings, валидирует CR только как часть CRLF, после этого нормализует ровно `CRLF` delimiters в `LF`. Standalone CR и embedded non-protocol controls отвергаются; протокол fields, characters, lengths, node limits и terminator requirements остаются строгими.
+
+Collector revision повышен до `P3-A6-M2-v2`. Private evidence хранит только `failed_source`, `normalized_line_ending_classification`, число полностью принятых protocol records до ошибки и фиксированный parser error code. Raw stdout, malformed line contents, unrelated paths и private identifiers не записываются. Успешные источники также сохраняют только классификацию delimiters и parsed-record count. ADB allowlist, sysfs/`/dev` probe bytes, 30-second/40-observation caps, 16-node-per-source bound, confirmation flow и safety flags не изменялись.
+
+Тесты включают LF, CRLF Android-shaped probe output, mixed valid delimiters, standalone CR, embedded controls, missing terminator, unexpected records, strict schema, интеграционное сохранение `UNEXPECTED_RECORD`/`OUTPUT_FRAMING` и отсутствие malformed stdout в evidence. Эти fixtures являются offline synthetic data и не устанавливают фактический формат ADB stdout на Pico.
+
+M2.2 offline verification: PowerShell M2 harness **397 assertions PASS**; `python -m unittest discover -s pico/tests -v` — **201/201 PASS**; прямой M1 PowerShell harness — **29/29 PASS**; WSL POSIX integration — **PASS**; `git diff --check` — **PASS**. Аппаратные/ADB действия и approval record не выполнялись.
+
+SHA-256 текущего M2.2 collector module: `ad188e7f2eb50a7c78ca5fd4cf3ea45357a7e6c60903e478ee3f3154417422b8`; runner SHA остаётся `63ed273c01de3bbb098773546b2cadbd803e6d5a7d8d31c4c0e4297b20358066`. All four fixed probe hashes match the previous revision, confirming that the production POSIX templates are unchanged.
 
 ## Probe source hashes
 
@@ -51,7 +67,7 @@ SHA-256 исходников этой offline реализации: module `d5a3
 
 ## GO / BLOCKED
 
-**GO — только для одного отдельно одобренного node-metadata run. Hardware status сейчас NOT RUN.** Перед этим владелец должен создать отдельный действующий approval с exact action, target, expiry, `max_duration_seconds <=30`, `max_observations <=40`, выбрать единственный/default ADB transport и лично подтвердить `yes` в prompt. Если approval отсутствует/истёк, transport неоднозначен, identity tuple не совпала, любой command неуспешен или Toybox output несовместим — collector остановится без fallback и выдаст BLOCKED/PARTIAL.
+**GO рекомендовано для одного нового отдельно одобренного node-metadata run; hardware status сейчас NOT RUN.** Перед этим владелец должен создать отдельный действующий approval с exact action, target, expiry, `max_duration_seconds <=30`, `max_observations <=40`, выбрать единственный/default ADB transport и лично подтвердить `yes` в prompt. Новая диагностика позволит установить источник и parser rejection без сохранения stdout. Если approval отсутствует/истёк, transport неоднозначен, identity tuple не совпала, любой command неуспешен или Toybox output несовместим — collector остановится без fallback и выдаст BLOCKED/PARTIAL.
 
 Будущая команда (не запускалась):
 

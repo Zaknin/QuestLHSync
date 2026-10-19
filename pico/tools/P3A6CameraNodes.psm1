@@ -334,9 +334,26 @@ function Resolve-P3A6M2Confirmation {
 function ConvertFrom-P3A6M2ProbeOutput {
     [CmdletBinding()]
     param([Parameter(Mandatory)][AllowEmptyString()][string]$ProbeText,[ValidateSet('sysfs','dev')][string]$Source)
-    $result = [ordered]@{valid=$false;source=$Source;source_status='UNAVAILABLE';nodes=[ordered]@{};reason=$null}
-    if ($ProbeText.Length -gt 65536 -or $ProbeText.Contains("`r") -or $ProbeText.Contains([char]0)) { $result.reason='OUTPUT_BOUNDARY'; return [pscustomobject]$result }
-    $lines = @($ProbeText -split "`n")
+    $result = [ordered]@{valid=$false;source=$Source;source_status='UNAVAILABLE';nodes=[ordered]@{};line_ending_classification='NOT_ANALYZED';record_count=0;reason=$null}
+    if ($ProbeText.Length -gt 65536) { $result.reason='OUTPUT_BOUNDARY'; return [pscustomobject]$result }
+    $lfCount=0; $crlfCount=0; $invalidCr=$false; $invalidControl=$false
+    for ($i=0;$i -lt $ProbeText.Length;$i++) {
+        $character=$ProbeText[$i]
+        if ($character -ceq [char]13) {
+            if ($i+1 -lt $ProbeText.Length -and $ProbeText[$i+1] -ceq [char]10) { $crlfCount++; $i++ }
+            else { $invalidCr=$true }
+        } elseif ($character -ceq [char]10) { $lfCount++ }
+        elseif ([char]::IsControl($character) -and $character -cne [char]9) { $invalidControl=$true }
+    }
+    if ($invalidCr) { $result.line_ending_classification='INVALID'; $result.reason='OUTPUT_FRAMING'; return [pscustomobject]$result }
+    if ($lfCount -gt 0 -and $crlfCount -gt 0) { $result.line_ending_classification='MIXED' }
+    elseif ($crlfCount -gt 0) { $result.line_ending_classification='CRLF' }
+    elseif ($lfCount -gt 0) { $result.line_ending_classification='LF' }
+    else { $result.line_ending_classification='NONE' }
+    if ($invalidControl) { $result.reason='OUTPUT_CONTROL'; return [pscustomobject]$result }
+    if (-not $ProbeText.EndsWith("`n",[StringComparison]::Ordinal)) { $result.reason='OUTPUT_FRAMING'; return [pscustomobject]$result }
+    $normalizedText=$ProbeText.Replace("`r`n","`n")
+    $lines = @($normalizedText.Split([char]10))
     if ($lines.Count -lt 2 -or $lines[-1] -cne '') { $result.reason='OUTPUT_FRAMING'; return [pscustomobject]$result }
     $sourceCount=0; $nodeCount=0
     $sourceRecordName=$Source.ToUpperInvariant() + '_SOURCE'
@@ -376,6 +393,7 @@ function ConvertFrom-P3A6M2ProbeOutput {
         } elseif ($fields.Count -eq 3 -and $fields[0] -ceq 'P3A6M2' -and $fields[1] -ceq $sourceRecordName) {
             $sourceCount++; $result.source_status=$fields[2]
         } else { $result.reason='UNEXPECTED_RECORD'; return [pscustomobject]$result }
+        $result.record_count++
     }
     if ($sourceCount -ne 1 -or $nodeCount -gt 48) { $result.reason='RECORD_COUNT'; return [pscustomobject]$result }
     if ($result.source_status -ceq 'NOT_OBSERVED' -and $nodeCount -gt 0) { $result.reason='SOURCE_STATUS_CONFLICT'; return [pscustomobject]$result }
@@ -489,12 +507,13 @@ function Invoke-P3A6M2Inventory {
     }
     $observation=[ordered]@{
         schema='p3a6.m2.node_inventory.v1';run_id=[guid]::NewGuid().ToString('N');action=$Action;approval_id=[string]$Approval.approval_id;device='Pico 4 Pro'
-        collector_revision='P3-A6-M2-v1';started_at_utc=(Get-P3A6M2UtcNow);finished_at_utc=$null;elapsed_milliseconds=$null
+        collector_revision='P3-A6-M2-v2';started_at_utc=(Get-P3A6M2UtcNow);finished_at_utc=$null;elapsed_milliseconds=$null
         collection_status='PARTIAL';identity_status='NOT_OBSERVED';adb_command_count=0;observation_count=0
         device_state=[ordered]@{status='NOT_OBSERVED';value=$null;method='adb get-state';observed_at_utc=$null;reason=$null}
         software_identity=$identityEvidence;build=$buildEvidence
         kernel=[ordered]@{release=[ordered]@{status='NOT_OBSERVED';value=$null;method='adb shell uname -r';observed_at_utc=$null;build_identity=$null;reason=$null}}
-        sources=[ordered]@{sysfs=[ordered]@{status='NOT_OBSERVED';method='fixed sysfs name/index/dev probe';script_sha256=$null;observed_at_utc=$null;build_identity=$null;nodes=@()};dev=[ordered]@{status='NOT_OBSERVED';method='fixed /dev metadata probe; no node open';script_sha256=$null;observed_at_utc=$null;build_identity=$null;nodes=@()}}
+        sources=[ordered]@{sysfs=[ordered]@{status='NOT_OBSERVED';method='fixed sysfs name/index/dev probe';script_sha256=$null;observed_at_utc=$null;build_identity=$null;normalized_line_ending_classification='NOT_OBSERVED';parsed_record_count=0;parser_error_code=$null;nodes=@()};dev=[ordered]@{status='NOT_OBSERVED';method='fixed /dev metadata probe; no node open';script_sha256=$null;observed_at_utc=$null;build_identity=$null;normalized_line_ending_classification='NOT_OBSERVED';parsed_record_count=0;parser_error_code=$null;nodes=@()}}
+        parser_diagnostics=[ordered]@{failed_source=$null;normalized_line_ending_classification='NOT_OBSERVED';parsed_record_count=0;parser_error_code=$null}
         limits=[ordered]@{duration_seconds=$effectiveDuration;observations=$effectiveRecords;nodes_per_source=$script:P3A6M2MaxNodesPerSource}
         methods=@('ADB get-state','fixed getprop keys','uname -r','POSIX shell sysfs attributes','ls -ldn metadata on /dev candidates')
         source_hashes=[ordered]@{collector_module_sha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant();runner_sha256=(Get-FileHash -LiteralPath (Join-Path $script:P3A6M2RepoRoot 'pico/tools/collect_p3a6_camera_node_inventory.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()}
@@ -585,7 +604,14 @@ function Invoke-P3A6M2Inventory {
             if ($null -eq $response -or $response.exit_code -ne 0) { throw 'ADB_COMMAND_FAILED' }
             if ($started.ElapsedMilliseconds -ge $deadline) { throw 'M2_TIMEOUT' }
             $parsed=ConvertFrom-P3A6M2ProbeOutput -ProbeText ([string]$response.stdout) -Source $source
-            if (-not $parsed.valid) { throw 'PARTIAL_UNEXPECTED_OUTPUT' }
+            $observation.sources[$source].normalized_line_ending_classification=[string]$parsed.line_ending_classification
+            $observation.sources[$source].parsed_record_count=[int]$parsed.record_count
+            if (-not $parsed.valid) {
+                $observation.sources[$source].status='UNAVAILABLE'
+                $observation.sources[$source].parser_error_code=[string]$parsed.reason
+                $observation.parser_diagnostics=[ordered]@{failed_source=$source;normalized_line_ending_classification=[string]$parsed.line_ending_classification;parsed_record_count=[int]$parsed.record_count;parser_error_code=[string]$parsed.reason}
+                throw 'PARTIAL_UNEXPECTED_OUTPUT'
+            }
             $observation.sources[$source].status=$parsed.source_status
             $observation.sources[$source].observed_at_utc=Get-P3A6M2UtcNow
             $observation.sources[$source].build_identity=[string]$observation.build.fingerprint.value

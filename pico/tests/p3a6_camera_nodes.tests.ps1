@@ -175,6 +175,26 @@ try {
     Assert-True (-not (ConvertFrom-P3A6M2ProbeOutput -ProbeText ($emptySys.Text+"P3A6M2`tSURPRISE`tvalue`n") -Source sysfs).valid) 'Unexpected protocol records fail closed'
     Assert-True (-not (ConvertFrom-P3A6M2ProbeOutput -ProbeText ($emptySys.Text.TrimEnd("`n")) -Source sysfs).valid) 'Truncated protocol framing is rejected'
     Assert-True (-not (ConvertFrom-P3A6M2ProbeOutput -ProbeText "P3A6M2`tSYSFS_SOURCE`tobserved`n" -Source sysfs).valid) 'Protocol status tokens are case-sensitive'
+    $lfParse=ConvertFrom-P3A6M2ProbeOutput -ProbeText $emptySys.Text -Source sysfs
+    Assert-True ($lfParse.valid -and $lfParse.line_ending_classification -ceq 'LF' -and $lfParse.record_count -eq 1) 'LF protocol records retain strict schema and expose safe framing metadata'
+    $emptyOutputParse=ConvertFrom-P3A6M2ProbeOutput -ProbeText '' -Source sysfs
+    Assert-True (-not $emptyOutputParse.valid -and $emptyOutputParse.reason -ceq 'OUTPUT_FRAMING' -and $emptyOutputParse.line_ending_classification -ceq 'NONE') 'Empty output is framed as absent rather than misclassified as line-ending data'
+    $androidLikeOutput="P3A6M2`tSYSFS_NODE`tvideo0`tname`tOBSERVED`tPICO Camera 0`nP3A6M2`tSYSFS_NODE`tvideo0`tindex`tOBSERVED`t0`nP3A6M2`tSYSFS_NODE`tvideo0`tdev`tOBSERVED`t81:0`nP3A6M2`tSYSFS_SOURCE`tOBSERVED`n"
+    $androidLikeCrlf=$androidLikeOutput.Replace("`n","`r`n")
+    $crlfParse=ConvertFrom-P3A6M2ProbeOutput -ProbeText $androidLikeCrlf -Source sysfs
+    Assert-True ($crlfParse.valid -and $crlfParse.line_ending_classification -ceq 'CRLF' -and $crlfParse.record_count -eq 4 -and $crlfParse.nodes.video0.name -ceq 'PICO Camera 0') 'Android-like CRLF command output parses without relaxing fields'
+    $mixedAndroidLike=$androidLikeOutput.Replace("video0`tname`tOBSERVED`tPICO Camera 0`n","video0`tname`tOBSERVED`tPICO Camera 0`r`n")
+    $mixedParse=ConvertFrom-P3A6M2ProbeOutput -ProbeText $mixedAndroidLike -Source sysfs
+    Assert-True ($mixedParse.valid -and $mixedParse.line_ending_classification -ceq 'MIXED' -and $mixedParse.record_count -eq 4) 'Only valid LF and CRLF boundaries are normalized in a mixed stream'
+    $standaloneCrParse=ConvertFrom-P3A6M2ProbeOutput -ProbeText ($emptySys.Text.Replace('SYSFS_SOURCE',"SYSFS`rSOURCE")) -Source sysfs
+    Assert-True (-not $standaloneCrParse.valid -and $standaloneCrParse.reason -ceq 'OUTPUT_FRAMING' -and $standaloneCrParse.line_ending_classification -ceq 'INVALID') 'Standalone CR is rejected as malformed framing'
+    $controlParse=ConvertFrom-P3A6M2ProbeOutput -ProbeText ($emptySys.Text.Replace('SYSFS_SOURCE',"SYSFS`vSOURCE")) -Source sysfs
+    Assert-True (-not $controlParse.valid -and $controlParse.reason -ceq 'OUTPUT_CONTROL') 'Embedded non-protocol control characters are rejected'
+    Assert-True ($standaloneCrParse.record_count -eq 0) 'Malformed line endings do not count as parsed records'
+    $unexpectedOutput=$androidLikeOutput.Replace("P3A6M2`tSYSFS_SOURCE`tOBSERVED`n","P3A6M2`tSURPRISE`tvalue`nP3A6M2`tSYSFS_SOURCE`tOBSERVED`n")
+    $unexpectedParse=ConvertFrom-P3A6M2ProbeOutput -ProbeText $unexpectedOutput -Source sysfs
+    Assert-True (-not $unexpectedParse.valid -and $unexpectedParse.reason -ceq 'UNEXPECTED_RECORD' -and $unexpectedParse.record_count -eq 3) 'Unexpected records retain exact parser reason and count only prior valid records'
+    Assert-True ($lfParse.PSObject.Properties.Name -contains 'line_ending_classification' -and $lfParse.PSObject.Properties.Name -contains 'record_count') 'Parser diagnostics expose only bounded metadata, not raw output'
     $missing=New-FixtureRoot
     try {
         $missScript=(Get-P3A6M2ProbeScript sysfs 16).Replace('/sys/class/video4linux',"$missing/absent/sysfs")
@@ -421,6 +441,44 @@ try {
         Assert-Equal $malformedEvidence.kernel.release.status 'NOT_OBSERVED' 'Kernel command not reached after malformed identity stays explicitly not observed'
         Assert-Equal $malformedEvidence.device_state.status 'OBSERVED' 'Successful get-state remains independently observed before later failure'
     } finally {if(Test-Path -LiteralPath $malformedRoot){Remove-Item -LiteralPath $malformedRoot -Recurse -Force}}
+
+    $protocolFailureText=$androidLikeOutput.Replace("`n","`r`n").Replace("P3A6M2`tSYSFS_SOURCE`tOBSERVED`r`n","P3A6M2`tUNKNOWN_PRIVATE_SENTINEL`tDO_NOT_PERSIST`r`nP3A6M2`tSYSFS_SOURCE`tOBSERVED`r`n")
+    $protocolResponses=[string[]]$responses.ToArray();$protocolResponses[8]=$protocolFailureText
+    $protocolMock=New-StrictMockExecutor $expectedVectors.ToArray() $protocolResponses
+    $protocolRoot=Join-Path $env:LOCALAPPDATA ('PicoLHSync\M2-parser-diagnostics-'+[guid]::NewGuid().ToString('N'))
+    try {
+        $protocolResult=Invoke-P3A6M2ConfirmedInventory -Approval (New-TestApproval) -Response yes -Interactive $true -AdbExecutor $protocolMock.Executor -OutputRoot $protocolRoot
+        Assert-Equal $protocolResult.collection_status 'PARTIAL_UNEXPECTED_OUTPUT' 'Malformed sysfs output remains a parser failure'
+        Assert-Equal $protocolResult.adb_command_count 9 'Parser failure at sysfs prevents the /dev probe'
+        Assert-Equal $protocolMock.State.index 9 'Only the exact nine commands before failed sysfs parsing are executed'
+        $protocolEvidencePath=Join-Path $protocolResult.evidence_directory 'evidence.json'
+        $protocolEvidenceJson=Get-Content -LiteralPath $protocolEvidencePath -Raw
+        $protocolEvidence=ConvertFrom-Json -InputObject $protocolEvidenceJson -AsHashtable
+        Assert-Equal $protocolEvidence.parser_diagnostics.failed_source 'sysfs' 'Private diagnostics identify the failed source'
+        Assert-Equal $protocolEvidence.parser_diagnostics.normalized_line_ending_classification 'CRLF' 'Private diagnostics classify CRLF before parser normalization'
+        Assert-Equal $protocolEvidence.parser_diagnostics.parsed_record_count 3 'Private diagnostics count only records accepted before failure'
+        Assert-Equal $protocolEvidence.parser_diagnostics.parser_error_code 'UNEXPECTED_RECORD' 'Private evidence preserves the parser rejection reason'
+        Assert-Equal $protocolEvidence.sources.sysfs.status 'UNAVAILABLE' 'Malformed source is explicitly unavailable while valid earlier records are not published as inventory'
+        Assert-Equal $protocolEvidence.sources.sysfs.parser_error_code 'UNEXPECTED_RECORD' 'Source record carries its bounded parser error code'
+        Assert-True (-not $protocolEvidenceJson.Contains('UNKNOWN_PRIVATE_SENTINEL') -and -not $protocolEvidenceJson.Contains('DO_NOT_PERSIST')) 'Malformed stdout is not persisted in private evidence'
+        Assert-True ($protocolEvidence.collector_revision -ceq 'P3-A6-M2-v2' -and -not ($protocolEvidence.PSObject.Properties.Name -contains 'stdout')) 'Diagnostic schema revision excludes raw stdout'
+    } finally {if(Test-Path -LiteralPath $protocolRoot){Remove-Item -LiteralPath $protocolRoot -Recurse -Force}}
+
+    $framingFailureText=$androidLikeOutput.Replace("PICO Camera 0","PICO Camera 0`rBROKEN").Replace("`n","`r`n")
+    $framingResponses=[string[]]$responses.ToArray();$framingResponses[8]=$framingFailureText
+    $framingMock=New-StrictMockExecutor $expectedVectors.ToArray() $framingResponses
+    $framingRoot=Join-Path $env:LOCALAPPDATA ('PicoLHSync\M2-framing-diagnostics-'+[guid]::NewGuid().ToString('N'))
+    try {
+        $framingResult=Invoke-P3A6M2ConfirmedInventory -Approval (New-TestApproval) -Response yes -Interactive $true -AdbExecutor $framingMock.Executor -OutputRoot $framingRoot
+        $framingEvidence=Get-Content -LiteralPath (Join-Path $framingResult.evidence_directory 'evidence.json') -Raw | ConvertFrom-Json -AsHashtable
+        Assert-Equal $framingResult.collection_status 'PARTIAL_UNEXPECTED_OUTPUT' 'Standalone CR at sysfs boundary fails closed'
+        Assert-Equal $framingEvidence.parser_diagnostics.failed_source 'sysfs' 'Framing diagnostic identifies sysfs source'
+        Assert-Equal $framingEvidence.parser_diagnostics.normalized_line_ending_classification 'INVALID' 'Framing diagnostic records invalid line-ending classification'
+        Assert-Equal $framingEvidence.parser_diagnostics.parsed_record_count 0 'Framing failure before parsing reports zero accepted records'
+        Assert-Equal $framingEvidence.parser_diagnostics.parser_error_code 'OUTPUT_FRAMING' 'Private evidence preserves OUTPUT_FRAMING exactly'
+        $framingEvidenceJson=Get-Content -LiteralPath (Join-Path $framingResult.evidence_directory 'evidence.json') -Raw
+        Assert-True (-not $framingEvidenceJson.Contains('BROKEN')) 'Standalone CR context and malformed stdout are not persisted'
+    } finally {if(Test-Path -LiteralPath $framingRoot){Remove-Item -LiteralPath $framingRoot -Recurse -Force}}
 
     $budgetVectors=[Collections.Generic.List[object]]::new();$budgetResponses=[Collections.Generic.List[string]]::new()
     foreach($i in 0..7){$budgetVectors.Add($expectedVectors[$i]);$budgetResponses.Add($responses[$i])}
