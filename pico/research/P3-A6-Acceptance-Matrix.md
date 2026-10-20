@@ -1,5 +1,8 @@
 # P3-A6 — Acceptance Matrix
 
+> **Current authorization (2026-10-20):** The owner explicitly removed rootless-only as a requirement. Root/`su -c` is allowed for subsequent bounded diagnostic / camera-reader experiments. Any historical row showing a rootless `NO-GO`, permission denial or unavailable rootless interface records that experiment's original scope and does not prohibit future root-enabled investigation. See [current strategy and root policy](P3-20261020-Consolidated-Status-and-Execution-Policy.md). Evidence claims and Lighthouse acceptance gates are unchanged.
+
+
 Обновлено: 2026-10-20, M2.9. Offline preparation отделена от runtime acceptance. Pico 4 Pro на international Pico OS — установленный факт владельца; Android property tuple описывает только программную идентичность. M1.5 остаётся PARTIAL_PERMISSION_DENIED; owner-reported M2.2 inventory остаётся PARTIAL_LIMITATIONS. M2.7B подтвердил установленный camx_core.so. M2.8B maps был BLOCKED на `PROC_ACCESS_DENIED`; M2.8C/D не наблюдали callback. M2.9 завершил доступную offline kernel-source ветку как `EXACT_KERNEL_MAPPING_UNAVAILABLE`; ни один runtime/physical-event/timing gate не повышен.
 
 ## Offline preparation M0/M1
