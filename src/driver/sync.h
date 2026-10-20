@@ -283,6 +283,23 @@ struct StepStat {
 
 extern FILE *g_ray_dump;  // tools only (qlhs_replay --rays): every sighting's ray and head pose
 
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+// Replay-only fit summaries. These contain aggregate geometry counts, never station coordinates or identifiers.
+struct ReplayFitDiagnostics {
+  double qpc_s = 0;
+  bool fit_ok = false, cond = false;
+  int observations = 0, dimension = 0;
+  int viewpoint_cells = 0, direction_cells = 0, joint_cells = 0;
+  int strongly_downweighted = 0;
+  double lambda_min = 0, lambda_max = 0, lambda_ratio = 0;
+  double robust_weight_min = 0, robust_weight_p10 = 0, robust_weight_mean = 0;
+  double effective_weight_mass = 0;
+  std::vector<double> eigenvalues, weakest_mode;
+  std::vector<std::pair<int, int>> camera_observations;
+  std::vector<int> station_observations;
+};
+#endif
+
 class Solver {
  public:
   static constexpr double GATE = 2.0, INLIER = 0.5, TAU = 60.0, WIN = 300.0, JUMP = 1.0, ACQ_WIN = 60.0;
@@ -326,6 +343,9 @@ class Solver {
   long ReplayAcquireGainRejections() const { return replay_acquire_gain_rejections_.load(); }
   long ReplayAcquireBodyAmbiguityRejections() const { return replay_acquire_body_ambiguity_rejections_.load(); }
   long ReplayAlignmentAccepts() const { return replay_alignment_accepts_.load(); }
+  std::vector<ReplayFitDiagnostics> ReplayConditioningFits() const { return replay_conditioning_fits_; }
+  long ReplayConditioningFitsDropped() const { return replay_conditioning_fits_dropped_; }
+  static bool ReplayConditioningSelfTest(FILE *out);
 #endif
   bool has_x() const { return has_x_; }
   bool starved() const { return starved_; }
@@ -397,6 +417,8 @@ class Solver {
   std::atomic<long> replay_acquire_gain_rejections_{0};
   std::atomic<long> replay_acquire_body_ambiguity_rejections_{0};
   std::atomic<long> replay_alignment_accepts_{0};
+  std::vector<ReplayFitDiagnostics> replay_conditioning_fits_;
+  long replay_conditioning_fits_dropped_ = 0;
 #endif
   static bool Starved(const Rays &r);
   double DimGate() const { return starved_ ? INLIER : -1; }
@@ -412,7 +434,11 @@ class Solver {
   // who: each ray's station as told (-1: left out), in place of the nearest within the gate
   FitR Fit(const X4 &x0, const std::vector<V3> &S, const std::vector<V3> &Z, const Rays &r, double now, double gate,
            const X4 *xa, const V3 *pivot = nullptr, double dim_gate = 180, const V3 *axis = nullptr,
-           const std::vector<int> *who = nullptr);
+           const std::vector<int> *who = nullptr
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+           , ReplayFitDiagnostics *diagnostic = nullptr
+#endif
+           );
   void Hypotheses(const Rays &r, const std::vector<V3> &S, std::vector<X4> &H, int M = 4000);
   void BatchSupport(const std::vector<X4> &H, const std::vector<V3> &S, const std::vector<V3> &Z, const Rays &r,
                     const std::vector<int> &idx, double gate, std::vector<int> &out) const;
@@ -523,6 +549,8 @@ class Sync {
     long acquire_candidate_successes = 0, acquire_candidate_rejections = 0;
     long acquire_support_rejections = 0, acquire_gain_rejections = 0, acquire_body_ambiguity_rejections = 0;
     long alignment_accepts = 0, timing_estimate_successes = 0;
+    long conditioning_fits_dropped = 0;
+    std::vector<ReplayFitDiagnostics> conditioning_fits;
   };
   ReplayDiagnostics GetReplayDiagnostics();
 #endif

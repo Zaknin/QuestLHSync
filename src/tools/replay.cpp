@@ -318,7 +318,7 @@ void PrintPicoStatus(const Sync::Status &st, long long pc_ns, double elapsed,
 
 int main(int argc, char **argv) {
   std::string log, calib, dir, outp, xfp;
-  bool learn = false, learn_grid = false, pings = false;
+  bool learn = false, learn_grid = false, pings = false, conditioning_self_test = false;
   bool pico_offline = false, pico_identity_control = false, pico_upper = false;
   std::string pico_transform_path, pico_audit_path;
   std::string pico_mapping_hypothesis = "candidate";
@@ -340,6 +340,7 @@ int main(int argc, char **argv) {
     else if (a == "--learn") learn = true;
     else if (a == "--learn-grid") learn_grid = true;
     else if (a == "--pings") pings = true;
+    else if (a == "--conditioning-self-test") conditioning_self_test = true;
     else if (a == "--pico-offline") pico_offline = true;
     else if (a == "--pico-identity-control") pico_identity_control = true;
     else if (a == "--pico-head-from-body" && i + 1 < argc) pico_transform_path = argv[++i];
@@ -356,6 +357,10 @@ int main(int argc, char **argv) {
     }
     else if (a == "--pico-audit" && i + 1 < argc) pico_audit_path = argv[++i];
     else log = a;
+  }
+  if (conditioning_self_test) {
+    if (argc != 2) { fprintf(stderr, "--conditioning-self-test accepts no other arguments\n"); return 2; }
+    return Solver::ReplayConditioningSelfTest(stdout) ? 0 : 1;
   }
   if (!pico_offline && (pico_identity_control || !pico_transform_path.empty() || pico_cameras_set ||
                         pico_mapping_set || !pico_audit_path.empty())) {
@@ -609,6 +614,29 @@ int main(int argc, char **argv) {
            st.cond ? "true" : "false");
     if (st.med >= 0) printf("%.5f", st.med); else printf("NA");
     printf(" final_exposure_ms=%.3f timing_learned=%s\n", st.expo * 1000, st.timing_learned ? "true" : "false");
+    printf("PICO_FIT_META eta_yaw=delta_yaw/COND_YAW;eta_ti=delta_y_i/COND_T_i=1..3;Fit_y1..3_are_centroid_translation_updates_m_not_raw_camera_or_body_motion;COND_YAW=0.1deg;COND_T=0.01m;SIG_R=0.1deg;H=sum((1+(residual/FSCALE)^2)^-1.5*dres_deta^T*dres_deta/SIG_R^2);strong_downweight=mean_component_weight<0.5;effective_weight_mass=sum(exp(-age/TAU)/cell_count*mean_robust_weight);cells=5cm_origin_and_1/30rad_direction\n");
+    printf("PICO_COND_SERIES samples=%zu dropped=%ld\n", diag.conditioning_fits.size(), diag.conditioning_fits_dropped);
+    for (const auto &fit : diag.conditioning_fits) {
+      printf("PICO_FIT pc_qpc_s=%.9f elapsed_s=%.3f fit_ok=%s obs=%d np=%d cond=%s lambda_min=%.9g lambda_max=%.9g ratio=%.9g eig=[",
+             fit.qpc_s, fit.qpc_s - t0, fit.fit_ok ? "true" : "false", fit.observations, fit.dimension,
+             fit.cond ? "true" : "false", fit.lambda_min, fit.lambda_max, fit.lambda_ratio);
+      for (size_t i = 0; i < fit.eigenvalues.size(); ++i) printf("%s%.9g", i ? "," : "", fit.eigenvalues[i]);
+      if (fit.eigenvalues.empty()) printf("NA");
+      printf("] weak=[");
+      const char *mode_names[] = {"yaw", "tx", "ty", "tz", "tilt0", "tilt1"};
+      for (size_t i = 0; i < fit.weakest_mode.size(); ++i)
+        printf("%s%s=%.9g", i ? "," : "", i < 6 ? mode_names[i] : "unknown", fit.weakest_mode[i]);
+      if (fit.weakest_mode.empty()) printf("NA");
+      printf("] cells=%d viewpoint=%d direction=%d rw_min=%.6g rw_p10=%.6g rw_mean=%.6g downweighted=%d eff_weight_mass=%.3f cam_obs=[",
+             fit.joint_cells, fit.viewpoint_cells, fit.direction_cells, fit.robust_weight_min,
+             fit.robust_weight_p10, fit.robust_weight_mean, fit.strongly_downweighted, fit.effective_weight_mass);
+      for (size_t i = 0; i < fit.camera_observations.size(); ++i)
+        printf("%s%d:%d", i ? "," : "", fit.camera_observations[i].first, fit.camera_observations[i].second);
+      printf("] station_obs=[");
+      for (size_t i = 0; i < fit.station_observations.size(); ++i)
+        printf("%s%d", i ? "," : "", fit.station_observations[i]);
+      printf("]\n");
+    }
     for (const auto &kv : pico_camera_counts)
       printf("PICO_CAMERA cam=%d frames_seen=%ld blobs_seen=%ld frames_submitted=%ld\n", kv.first,
              kv.second.frames, kv.second.blobs, kv.second.submitted);

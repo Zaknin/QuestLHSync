@@ -1225,6 +1225,70 @@ static double MinEig(double A[kMaxDof][kMaxDof], int n) {
   return m;
 }
 
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+// Independent replay-only Jacobi eigensystem for the final Fit information matrix.
+// The native MinEig() remains the sole source of the solver's condition decision.
+static void DiagnosticEigen(double A[kMaxDof][kMaxDof], int n, double values[kMaxDof], double vectors[kMaxDof][kMaxDof]) {
+  double a[kMaxDof][kMaxDof] = {};
+  memset(vectors, 0, sizeof(double) * kMaxDof * kMaxDof);
+  for (int i = 0; i < n; ++i) {
+    vectors[i][i] = 1;
+    for (int j = 0; j < n; ++j) a[i][j] = A[i][j];
+  }
+  for (int iter = 0; iter < 100 * kMaxDof * kMaxDof; ++iter) {
+    int p = 0, q = 0;
+    double largest = 0, scale = 0;
+    for (int i = 0; i < n; ++i) {
+      scale = std::max(scale, std::fabs(a[i][i]));
+      for (int j = i + 1; j < n; ++j) {
+        if (std::fabs(a[i][j]) > largest) { largest = std::fabs(a[i][j]); p = i; q = j; }
+      }
+    }
+    if (largest <= std::max(1e-300, scale * 1e-14)) break;
+    const double apq = a[p][q];
+    const double tau = (a[q][q] - a[p][p]) / (2 * apq);
+    const double t = (tau >= 0 ? 1 : -1) / (std::fabs(tau) + std::sqrt(tau * tau + 1));
+    const double c = 1 / std::sqrt(1 + t * t), s = t * c;
+    const double app = a[p][p], aqq = a[q][q];
+    a[p][p] = app - t * apq;
+    a[q][q] = aqq + t * apq;
+    a[p][q] = a[q][p] = 0;
+    for (int k = 0; k < n; ++k) {
+      if (k != p && k != q) {
+        const double akp = a[k][p], akq = a[k][q];
+        a[k][p] = a[p][k] = c * akp - s * akq;
+        a[k][q] = a[q][k] = s * akp + c * akq;
+      }
+      const double vkp = vectors[k][p], vkq = vectors[k][q];
+      vectors[k][p] = c * vkp - s * vkq;
+      vectors[k][q] = s * vkp + c * vkq;
+    }
+  }
+  int order[kMaxDof];
+  for (int i = 0; i < n; ++i) { values[i] = a[i][i]; order[i] = i; }
+  std::sort(order, order + n, [&](int x, int y) { return values[x] < values[y]; });
+  double sorted_values[kMaxDof], sorted_vectors[kMaxDof][kMaxDof] = {};
+  for (int i = 0; i < n; ++i) {
+    sorted_values[i] = values[order[i]];
+    for (int j = 0; j < n; ++j) sorted_vectors[j][i] = vectors[j][order[i]];
+  }
+  for (int i = 0; i < n; ++i) {
+    values[i] = sorted_values[i];
+    for (int j = 0; j < n; ++j) vectors[j][i] = sorted_vectors[j][i];
+  }
+  double magnitude = 0;
+  for (int i = 0; i < n; ++i) magnitude += vectors[i][0] * vectors[i][0];
+  magnitude = std::sqrt(magnitude);
+  if (magnitude > 0) for (int i = 0; i < n; ++i) vectors[i][0] /= magnitude;
+  for (int i = 0; i < n; ++i) {
+    if (std::fabs(vectors[i][0]) > 1e-14) {
+      if (vectors[i][0] < 0) for (int j = 0; j < n; ++j) vectors[j][0] = -vectors[j][0];
+      break;
+    }
+  }
+}
+#endif
+
 static bool Solve(double A[kMaxDof][kMaxDof], const double *b, double *x, int n) {
   double M[kMaxDof][kMaxDof + 1];
   for (int i = 0; i < n; i++) { for (int j = 0; j < n; j++) M[i][j] = A[i][j]; M[i][n] = b[i]; }
@@ -1250,8 +1314,17 @@ static bool Solve(double A[kMaxDof][kMaxDof], const double *b, double *x, int n)
 // who: each sighting's station as told (-1: left out), no gate.
 Solver::FitR Solver::Fit(const X4 &x0, const std::vector<V3> &S, const std::vector<V3> &Z, const Rays &r, double now,
                          double gate, const X4 *xa_in, const V3 *pivot, double dim_gate, const V3 *axis,
-                         const std::vector<int> *who) {
+                         const std::vector<int> *who
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+                         , ReplayFitDiagnostics *diagnostic
+#endif
+                         ) {
   FitR out;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+  if (diagnostic) *diagnostic = ReplayFitDiagnostics{};
+  const int np = pivot ? (axis ? 5 : 6) : 4;
+  if (diagnostic) diagnostic->dimension = np;
+#endif
   std::vector<V3> P, Zq;
   Predict(x0, S, Z, P, Zq);
   std::vector<char> use(r.size(), 0);
@@ -1269,6 +1342,27 @@ Solver::FitR Solver::Fit(const X4 &x0, const std::vector<V3> &S, const std::vect
     if (a < (r.B.empty() || r.B[n] ? gate : std::min(gate, dim_gate))) { use[n] = 1; m++; }
   }
   out.n = m;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+  if (diagnostic) {
+    diagnostic->observations = m;
+    diagnostic->station_observations.assign(S.size(), 0);
+    std::map<int, int> cameras;
+    std::set<std::array<int64_t, 3>> viewpoints, directions;
+    std::set<std::array<int64_t, 6>> joint_cells;
+    for (size_t n = 0; n < r.size(); ++n) if (use[n]) {
+      ++diagnostic->station_observations[kk[n]];
+      ++cameras[r.C[n]];
+      const CellKey cell = KeyOf(r.O[n], r.D[n]);
+      viewpoints.insert({cell.k[0], cell.k[1], cell.k[2]});
+      directions.insert({cell.k[3], cell.k[4], cell.k[5]});
+      joint_cells.insert({cell.k[0], cell.k[1], cell.k[2], cell.k[3], cell.k[4], cell.k[5]});
+    }
+    for (const auto &kv : cameras) diagnostic->camera_observations.push_back(kv);
+    diagnostic->viewpoint_cells = (int)viewpoints.size();
+    diagnostic->direction_cells = (int)directions.size();
+    diagnostic->joint_cells = (int)joint_cells.size();
+  }
+#endif
   if (m < 15) return out;
   std::vector<int> cnt;
   Cells(r, use, cnt);
@@ -1287,7 +1381,9 @@ Solver::FitR Solver::Fit(const X4 &x0, const std::vector<V3> &S, const std::vect
   for (size_t k = 0; k < S.size(); k++) Sc[k] = S[k] - (pivot ? *pivot : c);
   const V3 pc = pivot ? *pivot - c : V3{};
   if (!pivot) axis = nullptr;
+#ifndef QLHS_REPLAY_DIAGNOSTICS
   const int np = pivot ? (axis ? 5 : 6) : 4;
+#endif
   const double f = FSCALE;
   const size_t nrob = rows.size() * 3, nr = nrob + (pivot ? (axis ? 1 : 2) : 4);
 
@@ -1388,6 +1484,44 @@ Solver::FitR Solver::Fit(const X4 &x0, const std::vector<V3> &S, const std::vect
       for (int b = 0; b < np; b++) H[a][b] += w * Ji[a] * Ji[b] * sc[a] * sc[b] / (SIG_R * SIG_R);
   }
   out.cond = MinEig(H, np) >= 1.0;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+  if (diagnostic) {
+    double eval[kMaxDof] = {}, evec[kMaxDof][kMaxDof] = {};
+    DiagnosticEigen(H, np, eval, evec);
+    diagnostic->lambda_min = eval[0];
+    diagnostic->lambda_max = eval[np - 1];
+    diagnostic->lambda_ratio = diagnostic->lambda_max > 0 ? diagnostic->lambda_min / diagnostic->lambda_max : 0;
+    diagnostic->eigenvalues.assign(eval, eval + np);
+    diagnostic->weakest_mode.resize(np);
+    for (int i = 0; i < np; ++i) diagnostic->weakest_mode[i] = evec[i][0];
+
+    std::vector<double> robust;
+    robust.reserve(rows.size());
+    double effective_sum = 0, robust_sum = 0;
+    for (size_t row = 0; row < rows.size(); ++row) {
+      double row_weight = 0;
+      for (int component = 0; component < 3; ++component) {
+        const size_t i = row * 3 + component;
+        const double z = rv[i] / f;
+        row_weight += std::pow(1 + z * z, -1.5) / 3.0;
+      }
+      robust.push_back(row_weight);
+      robust_sum += row_weight;
+      if (row_weight < 0.5) ++diagnostic->strongly_downweighted;
+      const double influence = rows[row].sw * rows[row].sw * row_weight;
+      effective_sum += influence;
+    }
+    if (!robust.empty()) {
+      std::sort(robust.begin(), robust.end());
+      diagnostic->robust_weight_min = robust.front();
+      diagnostic->robust_weight_p10 = robust[(robust.size() - 1) / 10];
+      diagnostic->robust_weight_mean = robust_sum / robust.size();
+    }
+    diagnostic->effective_weight_mass = effective_sum;
+    diagnostic->cond = out.cond;
+    diagnostic->fit_ok = true;
+  }
+#endif
   if (pivot) out.tilt = axis ? Tilt(y[4] * axis->x, y[4] * axis->z) : Tilt(y[4], y[5]);
   if (axis) out.theta = y[4];
   double yaw = Wrap(y[0]);
@@ -1396,6 +1530,108 @@ Solver::FitR Solver::Fit(const X4 &x0, const std::vector<V3> &S, const std::vect
   out.ok = true;
   return out;
 }
+
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+bool Solver::ReplayConditioningSelfTest(FILE *out) {
+  if (!out) return false;
+  bool reference_ok = true;
+  const double expected[4] = {0.5, 2.0, 5.0, 9.0};
+  const double q[4][4] = {{0.5, 0.5, 0.5, 0.5}, {0.5, -0.5, 0.5, -0.5},
+                          {0.5, 0.5, -0.5, -0.5}, {0.5, -0.5, -0.5, 0.5}};
+  double reference[kMaxDof][kMaxDof] = {};
+  for (int i = 0; i < 4; ++i)
+    for (int j = 0; j < 4; ++j)
+      for (int k = 0; k < 4; ++k) reference[i][j] += q[i][k] * expected[k] * q[j][k];
+  double eval[kMaxDof] = {}, evec[kMaxDof][kMaxDof] = {};
+  DiagnosticEigen(reference, 4, eval, evec);
+  const double native_min = MinEig(reference, 4);
+  double residual = 0, mode_error = 0;
+  for (int i = 0; i < 4; ++i) {
+    if (std::fabs(eval[i] - expected[i]) > 1e-9) reference_ok = false;
+    if (std::fabs(std::fabs(evec[i][0]) - 0.5) > 1e-8) reference_ok = false;
+    double av = 0;
+    for (int j = 0; j < 4; ++j) av += reference[i][j] * evec[j][0];
+    residual = std::max(residual, std::fabs(av - eval[0] * evec[i][0]));
+    mode_error = std::max(mode_error, std::fabs(std::fabs(evec[i][0]) - std::fabs(q[i][0])));
+  }
+  if (std::fabs(native_min - expected[0]) > 1e-9 || residual > 1e-9 || mode_error > 1e-8) reference_ok = false;
+  fprintf(out, "EIGEN_REFERENCE status=%s eigenvalues=%.9g,%.9g,%.9g,%.9g weakest=%.9g,%.9g,%.9g,%.9g residual=%.3g native_min=%.9g\n",
+          reference_ok ? "PASS" : "FAIL", eval[0], eval[1], eval[2], eval[3], evec[0][0], evec[1][0], evec[2][0], evec[3][0],
+          residual, native_min);
+
+  auto run_control = [](bool diverse, ReplayFitDiagnostics &diagnostic, bool *step_capture_ok) {
+    LogFn quiet = [](const std::string &) {};
+    Solver solver(quiet, 0x503347u, {});
+    const X4 truth = diverse ? X4{0.15, 0.25, 1.45, 0.10} : X4{0, 0, 0, 0};
+    std::vector<V3> S, Z;
+    if (diverse) {
+      S = {{-2.2, 0.8, 0.2}, {2.1, 0.9, 0.3}, {-2.0, 2.2, 1.7}, {2.3, 2.0, 1.5}};
+    } else {
+      S = {{-0.02, 1.48, 0.01}, {0.02, 1.49, -0.01}, {-0.01, 1.51, 0.02}, {0.01, 1.52, -0.02}};
+    }
+    Z.assign(S.size(), V3{0, 0, 1});
+    std::vector<V3> P, Zq;
+    Solver::Predict(truth, S, Z, P, Zq);
+    Rays rays;
+    std::vector<int> who;
+    const int camera_ids[4] = {0, 3, 4, 5};
+    const double now = diverse ? 24 : 10;
+    const int viewpoints = diverse ? 24 : 32;
+    for (int v = 0; v < viewpoints; ++v) {
+      V3 origin;
+      if (diverse) {
+        const double angle = 2 * 3.14159265358979323846 * v / viewpoints;
+        origin = {0.65 * std::cos(angle), 1.4 + 0.25 * std::sin(2 * angle), -3.0 + 0.45 * std::sin(angle + 0.4)};
+      } else {
+        origin = {0, 1.5, -3.0};
+      }
+      for (int k = 0; k < (int)S.size(); ++k) {
+        const V3 delta = P[k] - origin;
+        rays.T.push_back(now - v * (diverse ? 0.3 : 0.005));
+        rays.G.push_back(0);
+        rays.O.push_back(origin);
+        rays.D.push_back(delta * (1.0 / norm(delta)));
+        rays.C.push_back(camera_ids[k]);
+        rays.B.push_back(1);
+        who.push_back(k);
+      }
+    }
+    FitR fit = solver.Fit(truth, S, Z, rays, now, Solver::GATE, nullptr, nullptr, 180, nullptr, &who, &diagnostic);
+    if (step_capture_ok) {
+      Solver step_solver(quiet, 0x503347u, {});
+      for (size_t k = 0; k < S.size(); ++k) step_solver.SetStation("SYNTH" + std::to_string(k), S[k], M3{});
+      step_solver.Reset(truth);
+      for (size_t i = 0; i < rays.size(); ++i)
+        step_solver.Add(rays.T[i], rays.O[i], rays.D[i], rays.G[i], rays.C[i], true);
+      step_solver.last_acq_ = now;  // prevent unrelated acquisition work in this Fit-path control
+      step_solver.Step(now);
+      const std::vector<ReplayFitDiagnostics> captured = step_solver.ReplayConditioningFits();
+      *step_capture_ok = captured.size() == 1 && captured[0].fit_ok && captured[0].cond &&
+                         captured[0].dimension == 4 && captured[0].observations >= 15;
+    }
+    return fit;
+  };
+
+  ReplayFitDiagnostics positive, negative;
+  bool step_capture_ok = false;
+  const FitR positive_fit = run_control(true, positive, &step_capture_ok);
+  const FitR negative_fit = run_control(false, negative, nullptr);
+  const bool positive_ok = positive_fit.ok && positive_fit.cond && positive.lambda_min >= 1.0 &&
+                           positive.viewpoint_cells >= 20 && positive.joint_cells >= 40;
+  const bool negative_ok = negative_fit.ok && !negative_fit.cond && negative.lambda_min < 1.0;
+  auto print_control = [&](const char *name, const FitR &fit, const ReplayFitDiagnostics &d) {
+    fprintf(out, "CONTROL name=%s fit_ok=%s obs=%d np=%d viewpoints=%d directions=%d cells=%d lambda_min=%.9g cond=%s eff_weight_mass=%.3f\n",
+            name, fit.ok ? "true" : "false", d.observations, d.dimension, d.viewpoint_cells, d.direction_cells,
+            d.joint_cells, d.lambda_min, fit.cond ? "true" : "false", d.effective_weight_mass);
+  };
+  print_control("positive", positive_fit, positive);
+  print_control("negative", negative_fit, negative);
+  fprintf(out, "STEP_CAPTURE status=%s samples=1\n", step_capture_ok ? "PASS" : "FAIL");
+  const bool ok = reference_ok && positive_ok && negative_ok && step_capture_ok;
+  fprintf(out, "PICO_COND_SELFTEST status=%s\n", ok ? "PASS" : "FAIL");
+  return ok;
+}
+#endif
 
 // acquisition: 2-ray minimal solver (one ray per station, both through their stations) + consensus
 void Solver::Hypotheses(const Rays &r, const std::vector<V3> &S, std::vector<X4> &H, int M) {
@@ -2230,7 +2466,16 @@ StepStat Solver::Step(double /*now*/) {
           break;
         }
       }
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+      ReplayFitDiagnostics fit_diagnostic;
+      FitR f = Fit(x_, S, Z, r, now, GATE, has_anchor_ ? &anchor_ : nullptr, nullptr, DimGate(), nullptr, nullptr,
+                   &fit_diagnostic);
+      fit_diagnostic.qpc_s = now;
+      if (replay_conditioning_fits_.size() < 10000) replay_conditioning_fits_.push_back(std::move(fit_diagnostic));
+      else ++replay_conditioning_fits_dropped_;
+#else
       FitR f = Fit(x_, S, Z, r, now, GATE, has_anchor_ ? &anchor_ : nullptr, nullptr, DimGate());
+#endif
       if (f.ok) {
         x_ = f.x;
         if (f.cond || !has_anchor_) { anchor_ = f.x; has_anchor_ = true; }
@@ -3850,6 +4095,8 @@ Sync::ReplayDiagnostics Sync::GetReplayDiagnostics() {
   d.acquire_body_ambiguity_rejections = solver_.ReplayAcquireBodyAmbiguityRejections();
   d.alignment_accepts = solver_.ReplayAlignmentAccepts();
   d.timing_estimate_successes = replay_timing_estimate_successes_.load();
+  d.conditioning_fits = solver_.ReplayConditioningFits();
+  d.conditioning_fits_dropped = solver_.ReplayConditioningFitsDropped();
   return d;
 }
 #endif
