@@ -2274,6 +2274,9 @@ StepStat Solver::Step(double /*now*/) {
     X4 xa;
     int sa, tight;
     if (Acquire(now, xa, sa, tight)) {
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+      ++replay_acquire_candidate_successes_;
+#endif
       int cur = has_x_ ? ThinnedScore(x_, now) : 0;
       st.has_acq = true; st.acq_sa = sa; st.acq_cur = cur; st.acq_tight = tight;
       // the mirror check's flip has the worn devices for evidence as well: half the support will do. A fit far off the
@@ -2287,14 +2290,27 @@ StepStat Solver::Step(double /*now*/) {
       int fav = far ? BodyFavours(xa, x_, dn, dc, how) : 0;
       int need = far && !fav ? 2 * ACQ : ACQ;
       bool enough = sa >= k * need || tight >= k * TIGHT_N || (acq_forced_ && sa >= k * ACQ / 2);
-      if (!enough || !(sa > 2 * cur + 5 || acq_forced_)) {
+      bool gains_support = sa > 2 * cur + 5 || acq_forced_;
+      if (!enough || !gains_support) {
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+        ++replay_acquire_candidate_rejections_;
+        if (!enough) ++replay_acquire_support_rejections_;
+        if (!gains_support) ++replay_acquire_gain_rejections_;
+#endif
       } else if (fav == 2) {
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+        ++replay_acquire_candidate_rejections_;
+        ++replay_acquire_body_ambiguity_rejections_;
+#endif
         if (now - kept_said_ > 60) {
           kept_said_ = now;
           log_(Fmt("acquisition: yaw %+.1f deg (support %d, was %d) would fit as well, but %s: the current fit stays",
                    xa[0] * kDeg, sa, cur, how.c_str()));
         }
       } else {
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+        ++replay_alignment_accepts_;
+#endif
         log_(Fmt("acquired: yaw %+.2f deg t [%.3f %.3f %.3f] support %d (%d within %.1f deg, was %d)%s", xa[0] * kDeg, xa[1],
                  xa[2], xa[3], sa, tight, TIGHT_DEG, cur, acq_forced_ ? ", by the mirror check" : ""));
         Reset(xa);
@@ -3102,11 +3118,20 @@ void Sync::OnLine(double pc, const char *line) {
   nb = (int)bl.size();
   spots_.frames++;
   spots_.seen += nb;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+  replay_diagnostics_.cameras[cam].frames++;
+#endif
   if (!have_optics_) { spots_.other += nb; return; }
   double hg = have_lag ? hs - lag : std::numeric_limits<double>::quiet_NaN();  // frame time, headset clock
   if (have_lag && grid_.period(cam) > 0) solver_.SetFramePeriod(grid_.period(cam));
   double grid_pc;
-  if (!clock_.Map(hs - (have_lag ? lag : 0.0), grid_pc)) { spots_.other += nb; return; }
+  if (!clock_.Map(hs - (have_lag ? lag : 0.0), grid_pc)) {
+    spots_.other += nb;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+    replay_diagnostics_.cameras[cam].clock_map_failures++;
+#endif
+    return;
+  }
   double expo = expo_;
   double t = grid_pc - expo - (have_lag ? 0.0 : kLagFallback);
   waiting_.push_back({pc, t, hg, grid_pc, cam, have_lag, std::move(bl)});
@@ -3128,7 +3153,13 @@ void Sync::Use(const Shot &f) {
   const std::vector<Spot> &bl = f.bl;
   M3 R; V3 p;
   double w;
-  if (!poses_.At(t, R, p) || !poses_.Speed(t, w)) { spots_.other += nb; return; }
+  if (!poses_.At(t, R, p) || !poses_.Speed(t, w)) {
+    spots_.other += nb;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+    replay_diagnostics_.cameras[cam].pose_failures += nb;
+#endif
+    return;
+  }
   bool still = poses_.Still(t);
   {  // while SteamVR's headset stands still, do the lamps and windows the cameras see stand still too?
     std::vector<std::pair<double, double>> big;
@@ -3145,24 +3176,54 @@ void Sync::Use(const Shot &f) {
       }
     prev = big;
   }
-  if (still) { spots_.still += nb; return; }
+  if (still) {
+    spots_.still += nb;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+    replay_diagnostics_.cameras[cam].still_blobs += nb;
+#endif
+    return;
+  }
   M3 Rc;
   V3 tc;
   if (have_lag && w <= kWmax && optics_.Pose(cam, Rc, tc)) solver_.AddFrame(t, hg, cam, p + R * tc, R * Rc);
   for (const Spot &b : bl) {
     int x10 = b.x10, y10 = b.y10, npx = b.npx;
-    if (npx > kMaxPx) { spots_.big++; continue; }
+    if (npx > kMaxPx) {
+      spots_.big++;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+      replay_diagnostics_.cameras[cam].large_blobs++;
+#endif
+      continue;
+    }
     V3 o, d;
-    if (!optics_.Ray(cam, x10 / 10.0 - 0.5, y10 / 10.0 - 0.5, o, d)) { spots_.other++; continue; }
+    if (!optics_.Ray(cam, x10 / 10.0 - 0.5, y10 / 10.0 - 0.5, o, d)) {
+      spots_.other++;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+      replay_diagnostics_.cameras[cam].invalid_rays++;
+#endif
+      continue;
+    }
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+    replay_diagnostics_.cameras[cam].valid_rays++;
+#endif
     if (have_lag && cfg_.learn_timing) timing_.Record(grid_pc, o, d, hg, cam, b.peak >= kBright);
     if (g_ray_dump) {
       V3 O = p + R * o, D = R * d;
       fprintf(g_ray_dump, "R %.6f %d %.6f %.6f %.6f %.7f %.7f %.7f %.6f %.6f %.6f %.1f %d\n", t, cam, O.x, O.y, O.z, D.x,
               D.y, D.z, p.x, p.y, p.z, w, b.peak);
     }
-    if (w > kWmax) { spots_.fast++; continue; }
+    if (w > kWmax) {
+      spots_.fast++;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+      replay_diagnostics_.cameras[cam].fast_blobs++;
+#endif
+      continue;
+    }
     bool bright = b.peak >= kBright;
     solver_.Add(t, p + R * o, R * d, hg, cam, bright);  // dim ones too: they tell when the room is too light
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+    replay_diagnostics_.cameras[cam].solver_adds++;
+#endif
     if (bright || solver_.starved()) spots_.used++;
     else spots_.dim++;
   }
@@ -3606,6 +3667,9 @@ Transform Sync::Tick(double now) {
         std::lock_guard<std::mutex> g(net_);
         ok = timing_.Estimate(poses_, x, S, Z, cur, !timing_learned_, best, n, sp);
       }
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+      if (ok) ++replay_timing_estimate_successes_;
+#endif
       if (!ok && std::isfinite(sp.left) && now - split_said_ >= 300) {
         split_said_ = now;
         log_(Fmt("timing: turning left fits %.1f ms, turning right %.1f ms%s: too unsure to take, it stays %.1f ms",
@@ -3736,6 +3800,11 @@ Sync::Status Sync::GetStatus(double now) {
     std::lock_guard<std::mutex> g(st_m_);
     st = last_st_;
   }
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+  s.acquire_succeeded = st.has_acq;
+  s.acquisition_support = st.acq_sa;
+  s.tight_support = st.acq_tight;
+#endif
   s.cond = st.cond;
   s.n = st.n;
   s.med = st.has_med ? st.med : -1;
@@ -3768,3 +3837,19 @@ Sync::Status Sync::GetStatus(double now) {
   }
   return s;
 }
+
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+Sync::ReplayDiagnostics Sync::GetReplayDiagnostics() {
+  std::lock_guard<std::mutex> g(net_);
+  ReplayDiagnostics d = replay_diagnostics_;
+  d.pending_frames = (long)waiting_.size();
+  d.acquire_candidate_successes = solver_.ReplayAcquireCandidateSuccesses();
+  d.acquire_candidate_rejections = solver_.ReplayAcquireCandidateRejections();
+  d.acquire_support_rejections = solver_.ReplayAcquireSupportRejections();
+  d.acquire_gain_rejections = solver_.ReplayAcquireGainRejections();
+  d.acquire_body_ambiguity_rejections = solver_.ReplayAcquireBodyAmbiguityRejections();
+  d.alignment_accepts = solver_.ReplayAlignmentAccepts();
+  d.timing_estimate_successes = replay_timing_estimate_successes_.load();
+  return d;
+}
+#endif

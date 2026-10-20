@@ -11,6 +11,8 @@
 
 **Репозиторий:** https://github.com/Zaknin/QuestLHSync — **ветка `feature/pico-support`**. Мой локальный checkout Windows 11 — `C:\Dev\PicoLHSync`, PowerShell 7.6.6. Используй подключённый GitHub, проверь текущий HEAD, сам читай/коммить проверенные изменения, затем подтверждай их read-back. Pico 4 Pro (PICO OS 5.11.2, root) сейчас **выключена**; зато можно работать с **Pimax Crystal + SteamVR** на этом ПК. Не требуй включения Pico, если задача может решаться offline.
 
+> **Текущий статус P3-C (2026-10-20):** native solver offline replay выполнен на четырёх сохранённых Pico-сессиях; результат `DATA_OR_CALIBRATION_BLOCKED`. Frames, rays и Acquire candidates достигли штатного solver, но candidates не прошли support gate. Корректный числовой `HeadFromBody` отсутствует; identity была только диагностическим контролем. Смотри [P3-C Native Solver Replay](P3-C-Native-Solver-Replay.md). Следующий конкретный шаг — получить независимо обоснованный 4×4 `HeadFromBody`, затем проверить focused 474 s запись и held-out 418 s сессию. Все safety gates остаются false.
+
 ### Что уже доказано
 
 - P1 camera K0 read-only Binder/ashmem reader + PFR1 + upstream blob detector + QuestLHSync F/T TCP transport **работает**. Это НЕ готовая Lighthouse correction. `F` пока использует `copied_ns/1000`, `hs_calibration` fail-closed, оптическая registration не завершена.
@@ -23,7 +25,9 @@
 
 `OBSERVE ONLY`, `exact_time=false`, `live_lighthouse_correction_allowed=false`, `mapping_verified=false`, `pose_verified=false` до независимых доказательств. Не вмешиваться в SLAM, vendor services/firmware, HMD calibration, SteamVR driver/poses или живые `F` timestamps. Никаких ручных «исправлений» QTIMER на 4.7465 сек. Не коммитить приватные ELF/CSV/factory calibration; они находятся локально в `pico/build/*-private-*`.
 
-### Твоя первая задача в новом диалоге: **P3-B, host-only OpenVR + Windows QPC probe**
+### Историческая задача этого handover: **P3-B, host-only OpenVR + Windows QPC probe**
+
+Этот пункт описывает исходный scope предыдущего handover; P3-C выше — текущий актуальный этап. Не начинать заново P3-B только по этому историческому тексту.
 
 1. Посмотри, есть ли в репозитории готовые подходящие API/helpers; проверь актуальные официальные исходники/документацию OpenVR, не выдумывай прототипы и версии.
 2. Предложи минимальную read-only архитектуру и unit-test план; **реализуй** безопасный host-side probe в ветке `feature/pico-support` с mock tests, fail-closed behavior и документацией.

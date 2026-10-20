@@ -319,6 +319,14 @@ class Solver {
   void SetInImage(std::function<bool(int cam, V3 d)> f) { in_image_ = std::move(f); }
   void PoseBreak(double t);
   StepStat Step(double now);
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+  long ReplayAcquireCandidateSuccesses() const { return replay_acquire_candidate_successes_.load(); }
+  long ReplayAcquireCandidateRejections() const { return replay_acquire_candidate_rejections_.load(); }
+  long ReplayAcquireSupportRejections() const { return replay_acquire_support_rejections_.load(); }
+  long ReplayAcquireGainRejections() const { return replay_acquire_gain_rejections_.load(); }
+  long ReplayAcquireBodyAmbiguityRejections() const { return replay_acquire_body_ambiguity_rejections_.load(); }
+  long ReplayAlignmentAccepts() const { return replay_alignment_accepts_.load(); }
+#endif
   bool has_x() const { return has_x_; }
   bool starved() const { return starved_; }
   int resets() const { return resets_; }
@@ -382,6 +390,14 @@ class Solver {
   bool acq_forced_ = false;  // the last acquisition overruled the current fit by the mirror check
   bool acq_dim_ = false;     // ... was found on dim rays too (Bright): it needs twice the support
   std::atomic<bool> starved_{false};  // the recent rays are under 5% bright, of 200 or more (see Bright)
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+  std::atomic<long> replay_acquire_candidate_successes_{0};
+  std::atomic<long> replay_acquire_candidate_rejections_{0};
+  std::atomic<long> replay_acquire_support_rejections_{0};
+  std::atomic<long> replay_acquire_gain_rejections_{0};
+  std::atomic<long> replay_acquire_body_ambiguity_rejections_{0};
+  std::atomic<long> replay_alignment_accepts_{0};
+#endif
   static bool Starved(const Rays &r);
   double DimGate() const { return starved_ ? INLIER : -1; }
   int amb_state_ = 0;        // the mirror check's last outcome, logged when it changes
@@ -480,6 +496,10 @@ class Sync {
   // status
   struct Status {
     bool has_x = false, locked = false, cond = false, timing_learned = false;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+    bool acquire_succeeded = false;
+    int acquisition_support = 0, tight_support = 0;
+#endif
     X4 x{};
     double med = -1, expo = 0, rtt = 0, cam_fps = 0, spot_rate = 0, sight_rate = 0, lag_cm = 0, locked_for = -1;
     int head_still = 0;  // 1: still for 2 s; 2: still for kFrozen s while the cameras see the room move
@@ -492,6 +512,20 @@ class Sync {
   struct Spots { long frames = 0, seen = 0, used = 0, still = 0, fast = 0, big = 0, other = 0, dim = 0; };
   Spots spots() { std::lock_guard<std::mutex> g(net_); return spots_; }
   static std::string Describe(const Spots &from, const Spots &to);
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+  struct ReplayCameraDiagnostics {
+    long frames = 0, clock_map_failures = 0, pose_failures = 0, still_blobs = 0;
+    long large_blobs = 0, invalid_rays = 0, valid_rays = 0, fast_blobs = 0, solver_adds = 0;
+  };
+  struct ReplayDiagnostics {
+    std::map<int, ReplayCameraDiagnostics> cameras;
+    long pending_frames = 0;
+    long acquire_candidate_successes = 0, acquire_candidate_rejections = 0;
+    long acquire_support_rejections = 0, acquire_gain_rejections = 0, acquire_body_ambiguity_rejections = 0;
+    long alignment_accepts = 0, timing_estimate_successes = 0;
+  };
+  ReplayDiagnostics GetReplayDiagnostics();
+#endif
   void StationsForDump(std::vector<std::string> &keys, std::vector<V3> &S) const {  // tools
     std::vector<V3> Z;
     solver_.Stations(keys, S, Z);
@@ -535,8 +569,14 @@ class Sync {
   double last_prec_ = -1e18;
   StepStat last_st_;
   bool has_last_st_ = false;
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+  std::atomic<long> replay_timing_estimate_successes_{0};
+#endif
   std::atomic<long> nframes_{0};
   Spots spots_;  // under net_
+#ifdef QLHS_REPLAY_DIAGNOSTICS
+  ReplayDiagnostics replay_diagnostics_;  // replay-only accounting; no production build includes this state
+#endif
   std::map<int, std::vector<std::pair<double, double>>> prev_big_;  // under net_: each camera's last steady lights
   long img_moved_ = 0, img_still_ = 0;  // under net_: of those, while SteamVR's headset stands still
   // under net_: short frames waiting for their head pose (kPoseWait), in arrival order

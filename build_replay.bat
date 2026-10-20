@@ -9,7 +9,7 @@ call "%VS%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
 cd /d "%~dp0"
 if not exist out mkdir out
 if not exist build\replay mkdir build\replay
-cl /nologo /O2 /EHsc /std:c++17 /MT /W3 /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /Fobuild\replay\ ^
+cl /nologo /O2 /EHsc /std:c++17 /MT /W3 /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /DQLHS_REPLAY_DIAGNOSTICS /Fobuild\replay\ ^
   src\tools\replay.cpp src\driver\sync.cpp /Fe:out\qlhs_replay.exe /link /NOLOGO || exit /b 1
 echo built out\qlhs_replay.exe
 if not exist build\nettest mkdir build\nettest
