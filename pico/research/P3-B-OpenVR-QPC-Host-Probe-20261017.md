@@ -1,6 +1,6 @@
 # P3-B — Windows QPC + OpenVR host-only probe
 
-**Date:** 2026-10-17. **Status:** implemented, synthetic tests PASS; Windows/Pimax hardware run PENDING. **Mode:** OBSERVE ONLY.
+**Date:** 2026-10-17; readiness rechecked 2026-10-20. **Status:** implemented, synthetic tests PASS; latest host check `HOST_RUNTIME_NOT_READY` (binding imports, SteamVR runtime processes absent; no HMD query or baseline run). **Mode:** OBSERVE ONLY.
 
 ## Scope / architecture
 
@@ -26,7 +26,7 @@ References:
 | Init failure / cleanup | Fail closed; shutdown exactly once if initialized | SYNTHETIC PASS |
 | SMB atomic publication | Read-back SHA-256 of .part and final file; manifest; .sha256 last, including BLOCKED | SYNTHETIC PASS |
 | SMB corrupt read-back | Refuse final commit and .sha256 | SYNTHETIC PASS |
-| Real SteamVR + Pimax | Host-device identity and QPC latency observed | OWNER RUN PENDING |
+| Real SteamVR + Pimax | Host-device identity and QPC latency observed | `HOST_RUNTIME_NOT_READY` on 2026-10-20; no baseline run |
 | Pico exposure/host clock mapping | Independent producer, synchronization, geometry evidence | BLOCKED |
 
 Mock tests from the repo root (do not need Windows or SteamVR):
@@ -50,6 +50,10 @@ Canonical **evidence** destination only: \\192.168.23.63\Torrents\Codex\PicoLHSy
 The probe does not mutate Pico SLAM, firmware, services, calibration, QuestLHSync F timestamps, SteamVR driver or runtime poses. It does not use compositor focus-changing WaitGetPoses, inject a virtual HMD, or call any OpenVR write API. Safety flags remain: observe_only=true, exact_time=false, live_lighthouse_correction_allowed=false, mapping_verified=false, pose_verified=false.
 
 The output contains private 6DoF room/tracking poses: do not commit the JSONL, manifest containing hardware references, raw binaries, factory calibration, or owner recordings into GitHub. The owner can share only the console status and SHA-256, then we can inspect the downstream Google Drive /Codex copy when synced.
+
+## Host runtime readiness check — 2026-10-20
+
+The installed Python `openvr` module imported successfully. A read-only process inventory found none of the standard SteamVR runtime processes (`vrserver`, `vrmonitor`, `vrcompositor`, `vrstartup`). Therefore no OpenVR initialization or HMD-connected query was attempted; the HMD state is **NOT OBSERVED**. The host is marked **`HOST_RUNTIME_NOT_READY`**. The probe was not launched, SteamVR was not started, and no P3-B JSONL/manifest/sidecar or runtime baseline was produced. The existing probe source is unchanged. Safety gates remain false.
 
 ## P3-A follow-up when Pico is available
 
