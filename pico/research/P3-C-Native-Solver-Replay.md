@@ -25,6 +25,10 @@
 
 Тестами проверены сохранение QPC/F, strict malformed-frame rejection без echo входных полей, upper-camera filtering, обе mapping-гипотезы, проверки rigid transform, неизменность production calibration rejection, channel-first S, non-Pico P/S/Q/B backward compatibility и synthetic known geometry, достигающая принятого native alignment.
 
+### P3-D post-audit: station record formats
+
+Последующая проверка четырёх исходных TXT нашла одновременно исходные channel-first и writer-produced channel-last `S` rows. Во всех реальных channel-last rows `x` имел десятичную точку: прежний `sscanf` с trailing `%c` поглощал последний channel как extra conversion и отклонял эти rows. Поэтому сохранённые 24 replay summaries не были загрязнены именно реальными channel-last records. Тем не менее синтетический integer-formatted `x` выявил воспроизводимое исключение: прежний parser мог принять transformed row как raw и передать его в `SetStationsRaw`. P3-D добавил строгую двусхемную классификацию и regression, принимающую только однозначный raw channel-first формат. Полные per-session counts и безопасные границы доказательства приведены в [P3-D](P3-D-HeadFromBody-and-Native-Replay.md).
+
 ## Использованные записи
 
 Использованы четыре ранее сохранённые сессии из `%LOCALAPPDATA%\QuestLHSync\recordings`. Полные SHA-256 исходников находятся только в приватном manifest.

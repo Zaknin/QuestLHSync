@@ -294,6 +294,40 @@ class PicoNativeReplayTests(unittest.TestCase):
             self.assertNotIn("P3C-CHANNEL-", result.stdout)
             self.assertIn("stations=2", result.stdout)
 
+    def test_pico_station_parser_rejects_channel_last_and_ambiguous_records(self):
+        with tempfile.TemporaryDirectory(prefix="p3c-station-format-guard-") as td:
+            root = Path(td)
+            log_path, calib_path = root / "input.txt", root / "calib.json"
+            lines = [
+                pico_recorded_station(10_000_000_000, "SYNTH-SHARED", 7, -1.25, 1.5, 2.75,
+                                      qw=1.0, qz=0.25),
+                # This channel-last row starts with an integer x. The former sscanf
+                # parser could consume x as the channel and the final channel as qz.
+                "11000000000 S SYNTH-TRANSFORMED 0 0 2 0 0 0 0 1\n",
+                # A fully numeric channel-last record sharing the raw source ID is
+                # classified separately and counted as a cross-format identity.
+                "11500000000 S SYNTH-SHARED -1.250000 1.500000 2.750000 1.000000 0.000000 0.000000 0.000000 7\n",
+                # Both layouts are syntactically plausible here, so fail closed.
+                "12000000000 S SYNTH-AMBIGUOUS 1 0 0 2 0 0 0 1\n",
+                "13000000000 S SYNTH-UNKNOWN not-a-channel 0 0 2 1 0 0 0\n",
+                pico_recorded_station(14_000_000_000, "SYNTH-SHARED", 7, -1.20, 1.5, 2.70,
+                                      qw=1.0, qz=0.25),
+            ]
+            log_path.write_text("".join(lines), encoding="ascii", newline="")
+            write_json(calib_path, pico_calibration())
+            result = self.run_replay(log_path, calib_path, root / "state", "--pico-offline",
+                                     "--pico-identity-control")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            station_lines = [line for line in result.stdout.splitlines() if line.startswith("PICO_STATUS")]
+            self.assertTrue(station_lines)
+            self.assertTrue(all("stations=1 " in line for line in station_lines), result.stdout)
+            self.assertIn(
+                "PICO_STATION_RECORDS raw_schema=2 channel_last_rejected=1 ambiguous_rejected=2 "
+                "malformed_rejected=1 unique_raw_ids=1 unique_channel_last_ids=1 unique_ambiguous_ids=2 cross_format_ids=1",
+                result.stdout,
+            )
+            self.assertNotIn("SYNTH-", result.stdout + result.stderr)
+
     def test_synthetic_known_geometry_reaches_original_native_solver(self):
         with tempfile.TemporaryDirectory(prefix="p3c-synthetic-") as td:
             root = Path(td)

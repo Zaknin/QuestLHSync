@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -36,6 +37,14 @@ struct PicoFrameRecord {
   std::string f_line;
 };
 
+struct PicoStationRecord {
+  std::string serial;
+  int channel = 0;
+  double values[7] = {};
+};
+
+enum class PicoStationRecordKind { RawChannelFirst, ChannelLast, Ambiguous, Malformed };
+
 struct PicoCameraCounts { long frames = 0, blobs = 0, submitted = 0; };
 
 bool ParseInteger(const std::string &s, long long &out, bool unsigned_only = false) {
@@ -50,6 +59,58 @@ bool ParseInteger(const std::string &s, long long &out, bool unsigned_only = fal
   if (errno == ERANGE || end != s.c_str() + s.size()) return false;
   out = v;
   return true;
+}
+
+bool ParseFiniteDecimal(const std::string &s, double &out) {
+  if (s.empty()) return false;
+  size_t i = 0;
+  if (s[i] == '+' || s[i] == '-') ++i;
+  bool digits = false;
+  while (i < s.size() && s[i] >= '0' && s[i] <= '9') { ++i; digits = true; }
+  if (i < s.size() && s[i] == '.') {
+    ++i;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') { ++i; digits = true; }
+  }
+  if (!digits) return false;
+  if (i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
+    ++i;
+    if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
+    size_t exponent_start = i;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') ++i;
+    if (i == exponent_start) return false;
+  }
+  if (i != s.size()) return false;
+  errno = 0;
+  char *end = nullptr;
+  double value = std::strtod(s.c_str(), &end);
+  if (errno == ERANGE || end != s.c_str() + s.size() || !std::isfinite(value)) return false;
+  out = value;
+  return true;
+}
+
+PicoStationRecordKind ParsePicoStationRecord(const char *rest, PicoStationRecord &out) {
+  std::istringstream input(rest ? rest : "");
+  std::vector<std::string> fields;
+  std::string field;
+  while (input >> field) fields.push_back(field);
+  if (fields.size() != 9 || fields[0].empty() || fields[0].size() > 63) return PicoStationRecordKind::Malformed;
+
+  long long raw_channel = -1, last_channel = -1;
+  bool raw_layout = ParseInteger(fields[1], raw_channel) && raw_channel >= 0 && raw_channel <= 15;
+  bool channel_last_layout = ParseInteger(fields[8], last_channel) && last_channel >= 0 && last_channel <= 15;
+  double raw_values[7] = {}, channel_last_values[7] = {};
+  for (size_t i = 0; i < 7; ++i) {
+    if (!ParseFiniteDecimal(fields[i + 2], raw_values[i])) raw_layout = false;
+    if (!ParseFiniteDecimal(fields[i + 1], channel_last_values[i])) channel_last_layout = false;
+  }
+
+  out.serial = fields[0];
+  if (raw_layout && channel_last_layout) return PicoStationRecordKind::Ambiguous;
+  if (channel_last_layout) return PicoStationRecordKind::ChannelLast;
+  if (!raw_layout) return PicoStationRecordKind::Malformed;
+  out.channel = static_cast<int>(raw_channel);
+  for (size_t i = 0; i < 7; ++i) out.values[i] = raw_values[i];
+  return PicoStationRecordKind::RawChannelFirst;
 }
 
 bool ParsePicoFrameRecord(const std::string &line, PicoFrameRecord &out) {
@@ -357,8 +418,11 @@ int main(int argc, char **argv) {
   static char line[1 << 16];
   std::map<std::string, std::pair<V3, M3>> raw;
   std::map<std::string, int> source_channels;
+  std::set<std::string> pico_raw_schema_ids, pico_channel_last_schema_ids, pico_ambiguous_schema_ids;
+  std::set<std::string> pico_raw_station_ids;
   std::map<int, PicoCameraCounts> pico_camera_counts;
   long pico_frames_parsed = 0, pico_frames_submitted = 0, pico_frames_excluded = 0, pico_unsupported_cameras = 0;
+  long pico_station_raw_schema = 0, pico_station_channel_last = 0, pico_station_ambiguous = 0, pico_station_malformed = 0;
   long long pico_first_pc_ns = 0, pico_last_pc_ns = 0;
   long pico_line_error = 0;
   bool pico_last_locked = false;
@@ -413,37 +477,45 @@ int main(int argc, char **argv) {
         sync.OnHmdPose(pc, ToQuat(R), V3{m[3], m[7], m[11]});
       }
     } else if (kind == 'S') {
-      char serial[64];
-      double v[7];
-      int ch = 0;
       if (pico_offline) {
-        // PICO's recording writer emits: S serial channel x y z qw qx qy qz.
-        // Keep that private station identity stable across updates; the channel is
-        // metadata and must never replace the solver's station key.
-        char extra = 0;
-        int got = sscanf(rest, "%63s %d %lf %lf %lf %lf %lf %lf %lf %c", serial, &ch,
-                         &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &extra);
-        if (got == 9 && ch >= 0 && ch <= 15) {
-          std::string source_serial = serial;
-          auto existing = source_channels.find(source_serial);
+        PicoStationRecord station;
+        PicoStationRecordKind record_kind = ParsePicoStationRecord(rest, station);
+        if (record_kind == PicoStationRecordKind::RawChannelFirst) {
+          ++pico_station_raw_schema;
+          pico_raw_schema_ids.insert(station.serial);
+          pico_raw_station_ids.insert(station.serial);
+          // Only raw source poses may populate the map passed to SetStationsRaw.
+          auto existing = source_channels.find(station.serial);
           int station_index;
           if (existing == source_channels.end()) {
             station_index = (int)source_channels.size() + 1;
-            source_channels.emplace(source_serial, station_index);
+            source_channels.emplace(station.serial, station_index);
           } else {
             station_index = existing->second;
           }
           std::string key = "P3C-STATION-" + std::to_string(station_index);
-          raw[key] = {V3{v[0], v[1], v[2]}, ToM3(Quat{v[3], v[4], v[5], v[6]})};
+          raw[key] = {V3{station.values[0], station.values[1], station.values[2]},
+                      ToM3(Quat{station.values[3], station.values[4], station.values[5], station.values[6]})};
           sync.SetStationsRaw(raw);
-          int channel = ch;
-          auto override_channel = chans.find(source_serial);
+          int channel = station.channel;
+          auto override_channel = chans.find(station.serial);
           if (override_channel != chans.end()) channel = override_channel->second;
           if (channel > 0) chans[key] = channel;
           sync.SetChannels(chans);
+        } else if (record_kind == PicoStationRecordKind::ChannelLast) {
+          ++pico_station_channel_last;
+          pico_channel_last_schema_ids.insert(station.serial);
+        } else if (record_kind == PicoStationRecordKind::Ambiguous) {
+          ++pico_station_ambiguous;
+          pico_ambiguous_schema_ids.insert(station.serial);
+        } else {
+          ++pico_station_malformed;
         }
       } else {
         // Preserve the legacy generic replay contract: S serial x y z qw qx qy qz [channel].
+        char serial[64];
+        double v[7];
+        int ch = 0;
         int got = sscanf(rest, "%63s %lf %lf %lf %lf %lf %lf %lf %d", serial, &v[0], &v[1], &v[2],
                          &v[3], &v[4], &v[5], &v[6], &ch);
         if (got >= 8) {
@@ -544,6 +616,12 @@ int main(int argc, char **argv) {
       printf("PICO_STAGE cam=%d frames_admitted=%ld clock_map_failures=%ld pose_failures=%ld still_blobs=%ld large_blobs=%ld invalid_rays=%ld valid_rays=%ld fast_blobs=%ld solver_adds=%ld\n",
              kv.first, kv.second.frames, kv.second.clock_map_failures, kv.second.pose_failures, kv.second.still_blobs,
              kv.second.large_blobs, kv.second.invalid_rays, kv.second.valid_rays, kv.second.fast_blobs, kv.second.solver_adds);
+    long shared_station_ids = 0;
+    for (const auto &id : pico_raw_schema_ids) if (pico_channel_last_schema_ids.count(id)) ++shared_station_ids;
+    printf("PICO_STATION_RECORDS raw_schema=%ld channel_last_rejected=%ld ambiguous_rejected=%ld malformed_rejected=%ld unique_raw_ids=%zu unique_channel_last_ids=%zu unique_ambiguous_ids=%zu cross_format_ids=%ld\n",
+           pico_station_raw_schema, pico_station_channel_last, pico_station_ambiguous, pico_station_malformed,
+           pico_raw_station_ids.size(), pico_channel_last_schema_ids.size(), pico_ambiguous_schema_ids.size(),
+           shared_station_ids);
   }
   if (out) fclose(out);
   if (xf) fclose(xf);
