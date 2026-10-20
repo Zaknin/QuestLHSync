@@ -1,5 +1,19 @@
 # P3-A6-M2 — Read-Only Camera Node Inventory Handover
 
+## Current frame metadata join decision — P3-A7 (2026-10-20)
+
+**NO-GO for another hardware metadata-join run under the current rootless constraint.** The existing 1,204-row K0 capture already provides per-record K0 camera ID, opaque `seq`, slot `+122` timestamp, and reader-clock fields. Repeating that same capture cannot identify the sequence namespace or timestamp source.
+
+Static review found a candidate route: QuickCamera `FrameMetaDate+8` is copied to PVR frame item `+0x30`, and `CameraManager::writeToSm` stores that word at K0 slot `+146` (the field called `seq` by `PicoFrameReader`). This is only a pre-unlock store. `DataBuffer::unlockForWrite` runs afterward; its implementation in matching `libpvrtrackingbuffer.so` is not among the available pinned artifacts. Therefore K0 `seq == QuickCamera request ID` remains **UNKNOWN**. No equality among CRM request ID, CRM frame ID, CSL/pipeline request ID, PVR camera ID, delivery identity, and K0 sequence is assumed.
+
+The existing reader outputs K0-local camera/sequence/timestamp together, but its saved launcher uses `adb shell su -c`; rootless access has not been demonstrated. It also lacks CRM frame ID, timestamp-producing request ID, fallback marker, and a callback-delivery bracket. Because the 38-slot timeout fallback can use the previous ring slot while metadata still labels the current request, this interface cannot attribute a timestamp to its producing request. Status: **`METADATA_JOIN_INTERFACE_UNAVAILABLE`**.
+
+Do not repeat the identical K0 capture or M2.8B/C/D probes. Reopen this path only if a matching `libpvrtrackingbuffer.so`/source resolves post-unlock slot behavior and a non-root reader is demonstrated that emits a same-record frame/request identity, raw timestamp and observation-clock bracket. Timestamp-source request/fallback status and CRM frame ID need their own explicit route. An independently time-referenced optical reference is a separate future method for physical-event semantics, not an immediate next run.
+
+Offline analysis of the existing capture found 301 rows each for C0/C3/C4/C5; every adjacent per-camera `seq` delta is +2, with no duplicate/reorder/gap in the observed sequence; +114 equals +122 in all 1,204 rows; +122 is strictly increasing with median step 39.999896 ms; same-sequence cross-camera spread is at most 53 ns; and +122−+130 is exactly 225,997 ns for every row. These are capture-local numeric patterns only: they do not establish CRM identity, timestamp source, SOF, exposure, or a valid correction. Full source hashes and analyzer commands are in [`P3-A7-Frame-Metadata-Identity-and-Join.md`](P3-A7-Frame-Metadata-Identity-and-Join.md).
+
+Safety gates remain false: `exact_time=false`, `mapping_verified=false`, `pose_verified=false`, `shared_buffer_identity_verified=false`, `frame_meta_bridge_verified=false`, `physical_event_verified=false`, `live_lighthouse_correction_allowed=false`.
+
 ## Current exact timestamp provenance status — M2.9 (2026-10-20)
 
 Offline source-to-sink audit is complete for the available evidence. The pinned Phoenix commit `ceafd3afc0208c03e0eb7a1a60939d147f92d72a` proves its own CSID SOF → QTIMER conversion → optional BOOTTIME/frame-header → IFE/ISP → CRM event path. The installed Pico provider ELF statically copies the CRM timestamp field to `CSLMessage+0x18`; QuickCamera reads it and uses a 38-slot request ring. These source/binary facts do not identify the exact running kernel build, runtime event ID/source, runtime callback, units/epoch at the target, or a physical exposure event.

@@ -116,6 +116,17 @@
 | M2.9-07 | Existing PVR/K0 timestamp measurements as CRM provenance | `SEPARATE EVIDENCE; NO CRM IDENTITY` | Historical private K0/PVR samples support a PVR QTIMER-like epoch and static metadata propagation. They do not identify CRM event ID/source or establish optical exposure time |
 | M2.9-08 | Next path to Lighthouse synchronization | `NO-GO for current timestamp; GO to focused B+C design only` | Stop broad exact-source search. A normal PVR metadata surface plus request/frame/fallback-source correlation may establish runtime software propagation; an independently timed optical reference on the same stream is needed for physical-event evidence. Both remain future separately scoped work, not executed or authorized by this offline phase |
 
+### P3-A7 frame metadata identity and join feasibility
+
+| ID | Claim | Current status | Evidence and boundary |
+|---|---|---|---|
+| P3-A7-01 | Existing 1,204-frame K0 capture ordering and per-camera timestamp pattern | `OFFLINE OBSERVATION VERIFIED; NO FRAME-ID SEMANTICS` | SHA-256 `be4ff0e03a500dfb5b7c5c487c3355893a84d1004393e112ee62a5c3be16a88a`; 301 rows each for C0/C3/C4/C5; per-camera sequence steps are all +2, timestamps ordered, shared-sequence cross-camera spread max 53 ns. This does not identify CRM request/frame IDs, a physical event, or exposure timing |
+| P3-A7-02 | QuickCamera current metadata request ID reaches K0 `seq` | `STATIC PRE-UNLOCK CANDIDATE; POST-UNLOCK UNKNOWN` | `FrameMetaDate+8` → PVR frame item `+0x30` → K0 slot `+146` store; `DataBuffer::unlockForWrite` follows and its matching implementation is absent. Do not treat the historical sequence values as proof of namespace equality |
+| P3-A7-03 | A permitted rootless interface returns camera ID, frame/request identity, raw timestamp and delivery bracket for one same frame | `NO-GO — METADATA_JOIN_INTERFACE_UNAVAILABLE` | Existing reader returns K0 camera/opaque sequence/timestamp and an observation clock, but the saved launch requires `su -c`; no rootless permission result is present. It omits CRM frame ID, timestamp source request ID, fallback marker and callback-delivery bracket |
+| P3-A7-04 | Timestamp source request and fallback occurrence are observable in K0 metadata | `UNKNOWN / NOT EXPOSED BY TRACED RECORD` | The fallback can select the prior 38-slot ring entry while retaining current request ID; no distinct source ID/branch marker is copied into the traced metadata or K0 output |
+| P3-A7-05 | `+114`, `+122`, `+130` and 225,997 ns adjustment identify physical SOF/exposure | `NOT PROVEN` | Historical data shows +114 equals +122 for all rows and +122−+130 is constantly 225,997 ns. Numerical relation and code-derived adjustment do not establish SOF, exposure midpoint/start, or correction validity |
+| P3-A7-06 | Next metadata-join hardware experiment | `NO-GO under current no-root interface` | Do not repeat an identical K0 scan. Reconsider only with (a) matching `libpvrtrackingbuffer.so`/source resolving unlock behavior, (b) demonstrated unprivileged reader access, and (c) same-record request/frame/source IDs, raw timestamp and observation-clock brackets. A separate optical reference is required for physical-event semantics |
+
 ## Неизменяемые gates
 
 На всём M0 и до получения независимых доказательств остаются `false`:
