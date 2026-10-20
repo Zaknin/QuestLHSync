@@ -1,6 +1,18 @@
 # P3-A6-M2 — Read-Only Camera Node Inventory Handover
 
-## Current callback/timestamp status — M2.8D (2026-10-20)
+## Current exact timestamp provenance status — M2.9 (2026-10-20)
+
+Offline source-to-sink audit is complete for the available evidence. The pinned Phoenix commit `ceafd3afc0208c03e0eb7a1a60939d147f92d72a` proves its own CSID SOF → QTIMER conversion → optional BOOTTIME/frame-header → IFE/ISP → CRM event path. The installed Pico provider ELF statically copies the CRM timestamp field to `CSLMessage+0x18`; QuickCamera reads it and uses a 38-slot request ring. These source/binary facts do not identify the exact running kernel build, runtime event ID/source, runtime callback, units/epoch at the target, or a physical exposure event.
+
+The public PICO-documentation tree at commit `99face1b92ccf8350e30268089e2da5b2682010e` contains only `kernel/README.md` for its kernel material. The README's reconstructed-kernel log reports `4.19.81-perf+`, AArch64 and a `smartcm`/Clang 8 banner, but the zImage/vmlinux bytes, hash, target fingerprint, generated config, DTB and build mapping are absent. Local project artifacts likewise contain no matching kernel image/config/DTB/Build ID. Exact mapping status is **`EXACT_KERNEL_MAPPING_UNAVAILABLE`**; the source-family relation remains **COMPATIBLE_BUT_UNVERIFIED**. Do not continue searching similar Qualcomm trees unless a concrete target kernel/firmware artifact appears.
+
+For the pinned Phoenix online path, the closest defensible value description is QTIMER ticks from CSID current-SOF registers, scaled as `ticks*10000/192` into integer nanoseconds, with a lazily sampled BOOTTIME offset. Offline contexts use BOOTTIME directly; optional frame-header timestamps are another path. The provider's event 0/2 marker pairs structurally align with public CamX Qtimer/Mono semantics, but the exact target kernel mapping and runtime branch are unknown. The label `CSLTimestampTypeQtimer` is not a unit/epoch contract; QuickCamera's `monoTimestamp` diagnostic argument is the ring value again, not an Android clock sample. The 5 ms fallback can write a prior ring slot while metadata names the current request.
+
+**Recommendation: NO-GO for Lighthouse correction or using this timestamp as exact physical time.** Stop the broad kernel-source search. The next technically meaningful route is a focused future B+C design: first identify a normal, non-protected PVR metadata surface that provides raw timestamp plus request/frame/fallback-source correlation; then compare that same stream with an independently time-referenced optical event and paired monotonic/host-clock brackets. No such experiment was run or authorized here. An optical result would still need a separate pose-clock, geometry, drift and uncertainty validation before synchronization use.
+
+The detailed report is [`P3-A6-M2.9-Exact-Kernel-Timestamp-Provenance.md`](P3-A6-M2.9-Exact-Kernel-Timestamp-Provenance.md). Proof and acceptance rows were updated without changing historical M2.8 outcomes. All gates remain false: `exact_time=false`, `mapping_verified=false`, `pose_verified=false`, `shared_buffer_identity_verified=false`, `frame_meta_bridge_verified=false`, `physical_event_verified=false`, `live_lighthouse_correction_allowed=false`.
+
+## Historical callback/timestamp status — M2.8D (2026-10-20)
 
 One owner-authorized M2.8D attempt verified the target fingerprint and ABI, then stopped at the fixed shell-v2 output marker before running logcat capability or snapshot. The runner archived the status as `ADB_TRANSPORT_BLOCKED`, but its control flow shows it received expected exit 23 and zero stderr before the marker failed. Offline code now classifies this as `OUTPUT_FRAMING_BLOCKED / SHELL_V2_MARKER_MISMATCH`; the exact output difference is unknown because stdout was intentionally not retained. CRLF was a hypothesis, not a confirmed hardware root cause. The manifest-only canonical package and sidecar independently verified and remain unchanged. The initial `PUBLICATION_BLOCKED` console message was caused by receipt construction accessing a missing provider-only `files` key after the sidecar had committed; this was reproduced and fixed with a sidecar-last regression, without changing or republishing the package. No callback record was collected, so callback occurrence is **NOT OBSERVED / NOT EVALUABLE**, not absent. No retry was made.
 
@@ -12,7 +24,7 @@ M2.8C found a callback-specific INFO diagnostic in the pinned `quickcamera.core.
 
 The static format includes a Qtimer label, request ID, frame count, timestamp and `monoTimestamp`; it has no CRM event ID or `bNotify`. The `frameCount` argument is the 64-bit word at `CSLMessage+0x10`; `+0x20` supplies `linkhdl`. The straight-line `monoTimestamp` argument reloads the same request-ID ring slot written from the message timestamp. Units, epoch, exact kernel event identity, runtime event occurrence, frame-ID namespaces, fallback occurrence, physical SOF/exposure and Lighthouse suitability remain unproven. No `/proc` method was retried.
 
-## Current SOF provenance status — M2.8B
+## Historical SOF provenance status — M2.8B
 
 M2.7B verified the installed /vendor/lib64/camx_core.so path, SHA-256 and Build ID for the owner-bound firmware. Static ELF inspection now confirms that quickcamera.core.so declares DT_NEEDED camx_core.so and imports the matching unversioned CSLRegisterMessageHandler export. The acquired provider statically subscribes/dequeues CRM events, builds CSLMessage fields and dispatches the registered callback; QuickCamera statically registers and reads compatible fields.
 
