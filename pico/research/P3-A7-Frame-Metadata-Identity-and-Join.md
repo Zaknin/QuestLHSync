@@ -1,5 +1,8 @@
 # P3-A7 — Frame Metadata Identity & Join Feasibility
 
+> **Policy supersession (2026-10-20):** The `NO-GO` recorded here concerns the **rootless-only** approach used for the original P3-A7 feasibility review. The owner has subsequently removed that constraint: rooted `su -c` reader/diagnostics are permitted without first demonstrating rootless access. This does not establish runtime callback identity, fallback source, physical frame timing, or Lighthouse correction readiness. See [active consolidated status](P3-20261020-Consolidated-Status-and-Execution-Policy.md).
+
+
 **Дата:** 2026-10-20
 **Baseline:** `d231cb4ca26606cf59f09d51e454438a072de237`
 **Scope:** the original P3-A7 audit below was offline-only. The 2026-10-20 addendum records one bounded, unprivileged ADB lookup/pull of the missing buffer library after exact build identity verification. No camera, K0 reader/capture, process inspection, root, procfs, logcat, or Lighthouse operation was performed.
