@@ -1,5 +1,8 @@
 # Pico 4 Pro support — P1 experimental backend
 
+> **Current execution policy (2026-10-20):** The owner has removed the rootless-only requirement for PicoLHSync experiments. Root/`su -c` is permitted for diagnostic and camera-reader work on the owned rooted Pico 4 Pro; an unprivileged alternative is **not** an acceptance prerequisite. See [consolidated status and active policy](research/P3-20261020-Consolidated-Status-and-Execution-Policy.md). Historical rootless NO-GO results remain historically accurate, not a project stop. Pico live Lighthouse correction remains `OBSERVE ONLY` pending actual geometry/time validation.
+
+
 Part of [QuestLHSync](https://github.com/CreoleVR/QuestLHSync), proposed for [#15](https://github.com/CreoleVR/QuestLHSync/issues/15).
 
 **Status: P1 development source, not a usable tracking-correction release.** Only Pico 4 Pro on Pico OS 5.11.2 / Android 10 with root has been investigated. No claim is made for Pico Neo 3, Pico 4 or other firmware. This backend is intended to be upstreamed, not maintained as a separate application.
