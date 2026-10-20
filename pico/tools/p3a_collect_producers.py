@@ -245,9 +245,11 @@ def canonical_commit(root: Path, name: str, report: dict, package: bytes,
         if cleanup_failed:
             raise IOError('Canonical publication failed and temporary-file cleanup was incomplete') from failure
         raise
+    files = report.get('files', [])
+    verified_libraries = len(files) if isinstance(files, (list, tuple)) else 0
     return {'status': report['status'], 'zip': str(root / (name + '.zip')),
             'manifest': str(root / (name + '.manifest.json')), 'sha256': str(sidecar),
-            'package_digest': hashes[name + '.zip'], 'verified_libraries': len(report['files']),
+            'package_digest': hashes[name + '.zip'], 'verified_libraries': verified_libraries,
             'requested_libraries': report.get('requested_count', 0),
             'errors': report.get('errors', [])}
 

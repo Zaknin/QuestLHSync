@@ -41,6 +41,13 @@ class M28CLogcatParserTests(unittest.TestCase):
              "source_label": "CSLTimestampTypeQtimer"},
         ])
 
+    def test_frame_count_accepts_the_signed_64_bit_csl_message_field(self):
+        value = str((1 << 63) - 1)
+        event = EVENT.replace(b"\t25\t", f"\t{value}\t".encode())
+        result = self.parse(protocol(PROCESS, event))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["records"][1]["frame_count_label"], value)
+
     def test_crlf_and_mixed_line_endings_are_normalized_at_line_boundaries(self):
         raw = protocol(PROCESS, EVENT).replace(b"\n", b"\r\n")
         result = self.parse(raw)

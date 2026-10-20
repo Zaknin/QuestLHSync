@@ -1,6 +1,6 @@
 # P3-A6 — Risk and Permissions
 
-Дата: 2026-10-19. Это оценка будущего эксперимента, не разрешение на его выполнение. Pico 4 Pro на international Pico OS — установленный факт владельца. Последний owner-run M1.5 завершился `PARTIAL_PERMISSION_DENIED`; текущая M1.6/M2 работа была offline-only. Все новые M2 действия остаются **NOT AUTHORIZED / NOT RUN**.
+Дата: 2026-10-20. Это оценка рисков, не самостоятельное разрешение на выполнение. Pico 4 Pro на international Pico OS — установленный факт владельца. M1.5 завершился `PARTIAL_PERMISSION_DENIED`; в M2.8D был выполнен один ограниченный owner-authorized shell-v2 probe, который остановился до logcat. Никакого повторного callback-log snapshot не выполнялось.
 
 ## Классы наблюдения
 
@@ -43,6 +43,16 @@
 `dumpsys media.camera`, `cmd media.camera`, camera/Binder client creation, camera open, `v4l2-ctl`, ioctl, tracing, logging changes, SteamVR и Lighthouse остаются вне первого scope. M2 sysfs/node probes не могут установить active queue ownership, frame delivery, physical SOF или exposure start. No M2 run is authorized by the M1 approval or by this proposal. POSIX probes прошли локальные synthetic fixtures; установленный Pico Toybox output не проверялся. Несовместимый output должен остановиться со статусом unavailable без fallback.
 
 M1 inventory runner не вызывает `adb devices` и не запрашивает serial: без выбранного transport он вызывает только `adb get-state`, а при заданном `-TransportId` — `adb -t <id> get-state`. Ошибка ADB используется только transiently для определения типа отказа; raw stderr отбрасывается. Если ADB сообщает `more than one device`, runner завершает работу до shell-команд как `BLOCKED_MULTIPLE_DEVICES`. При заранее выбранном transport ID он остаётся только в памяти текущего процесса и не записывается в evidence. Эта проверка, как и остальной M1 runner, ещё не выполнялась на устройстве.
+
+## M2.8D bounded callback-log probe — framing stop (2026-10-20)
+
+The M2.8D runner was limited to one digest-bound target, pinned SDK ADB, exact software fingerprint/ABI checks, fixed shell scripts, no PTY, and 15 seconds/40 records/16 candidate processes/six calls/64 KiB. The allowed operation used normal unprivileged ADB shell and existing default logs only; it made no camera, service, process-memory or logging-configuration change. The first hardware attempt passed identity/ABI and reached the shell-v2 script; the expected exit 23 and zero stderr were observed by the runner control flow, but the marker did not pass host framing. The collector stopped before logcat option capability and snapshot. Do not interpret this as transport loss or callback absence.
+
+An offline correction accepts LF or CRLF only at the marker's line boundary and classifies a marker mismatch after the expected exit status as `OUTPUT_FRAMING_BLOCKED`. The original archived manifest remains unchanged and reports its pre-correction generic `ADB_TRANSPORT_BLOCKED/SHELL_PROTOCOL_V2_UNVERIFIED`; raw stdout was not saved, so the specific byte cause is unknown. The canonical manifest-only package and SHA sidecar were independently verified; no republish was necessary. Offline reproduction also found that `canonical_commit()` raised `KeyError` for a diagnostic report without `files`, but only after the ZIP, manifest, and final sidecar had been independently read back. Its receipt path now treats the absent provider-only field as zero; a sidecar-last regression covers this case.
+
+The filtered callback script buffers process/logcat output on-device, then emits only a fixed protocol with bounded PID/name and validated numeric fields. It uses `ps -A -o PID,NAME` and `logcat -b main -d -v threadtime -t 256`, suppresses device stderr, checks command statuses, validates the generated protocol on-device, and rejects arbitrary AWK output even when AWK exits zero. The capability test uses `-t 1`, because Android 10 AOSP's logcat implementation treats `-t 0` as invalid and falls back to one record. Local WSL shell/awk tests support the intended filter behavior for synthetic fixtures only. They do not confirm the installed PICO Toybox, Android logcat flags, or target ADB shell framing; the hardware attempt stopped before reaching those stages.
+
+No raw logs were retained, and the M2.8C/M2.8D private package contains no log rows. The observed evidence cannot answer whether the callback ran. Do not repeat the logcat method; continue with offline exact-kernel timestamp provenance and build/config applicability. Any distinct later hardware attempt requires explicit task authorization and reviewed script hashes. All timing, mapping, pose, shared-buffer, frame-meta, physical-event and Lighthouse gates remain `false`.
 
 ## Риск приватности и хранения
 

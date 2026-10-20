@@ -153,6 +153,31 @@ class ExtractionTests(unittest.TestCase):
             self.assertEqual(receipt['errors'],[])
             self.assertEqual(replacements,['diagnostic.zip','diagnostic.manifest.json','diagnostic.sha256'])
             self.assertEqual(hashlib.sha256(Path(receipt['zip']).read_bytes()).hexdigest(),receipt['package_digest'])
+
+    def test_diagnostic_report_without_files_or_errors_returns_receipt_after_sidecar_last(self):
+        record={'status':'OUTPUT_FRAMING_BLOCKED','safety':SAFETY}
+        replacements=[]
+        real_replace=m.os.replace
+
+        def record_replace(source,destination):
+            replacements.append(Path(destination).name)
+            return real_replace(source,destination)
+
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            with patch.object(m.os, 'replace', side_effect=record_replace):
+                receipt=m.canonical_commit(root,'diagnostic-without-files',record,b'blocked diagnostic')
+            self.assertEqual(receipt['status'],'OUTPUT_FRAMING_BLOCKED')
+            self.assertEqual(receipt['verified_libraries'],0)
+            self.assertEqual(receipt['errors'],[])
+            self.assertEqual(replacements,[
+                'diagnostic-without-files.zip',
+                'diagnostic-without-files.manifest.json',
+                'diagnostic-without-files.sha256',
+            ])
+            self.assertTrue(Path(receipt['sha256']).is_file())
+            self.assertEqual(hashlib.sha256(Path(receipt['zip']).read_bytes()).hexdigest(),
+                             receipt['package_digest'])
             self.assertFalse(list(root.glob('*.part')))
 
 

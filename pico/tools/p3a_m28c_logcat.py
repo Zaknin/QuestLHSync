@@ -42,7 +42,6 @@ _PROCESS_NAME = re.compile(r"[A-Za-z0-9_.:@-]{1,256}\Z", re.ASCII)
 _PROCESS_MATCH = re.compile(r"(?:quickcamera|pvr|camera.*hidl|hidl.*camera)", re.IGNORECASE | re.ASCII)
 _PID = re.compile(r"[0-9]{1,10}\Z", re.ASCII)
 _SIGNED_I64 = re.compile(r"-?(?:0|[1-9][0-9]*)\Z", re.ASCII)
-_UNSIGNED_U32 = re.compile(r"(?:0|[1-9][0-9]*)\Z", re.ASCII)
 _DATE = re.compile(r"[0-9]{2}-[0-9]{2}\Z", re.ASCII)
 _TIME = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}\Z", re.ASCII)
 _UNSUPPORTED = (b"unknown option", b"unrecognized option", b"invalid option")
@@ -86,12 +85,6 @@ def _i64(value: str) -> bool:
     except ValueError:
         return False
     return -(1 << 63) <= number <= (1 << 63) - 1
-
-
-def _u32(value: str) -> bool:
-    if not _UNSIGNED_U32.fullmatch(value):
-        return False
-    return int(value, 10) <= (1 << 32) - 1
 
 
 def _safe_stderr_error(stderr: bytes) -> str | None:
@@ -195,7 +188,7 @@ def parse_probe_result(
                 or not _DATE.fullmatch(date)
                 or not _TIME.fullmatch(time)
                 or not _i64(request_id)
-                or not _u32(frame_count)
+                or not _i64(frame_count)
                 or not _i64(timestamp)
                 or not _i64(mono_timestamp)
                 or source != SOURCE_LABEL
