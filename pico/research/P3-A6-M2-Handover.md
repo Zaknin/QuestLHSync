@@ -1,5 +1,8 @@
 # P3-A6-M2 — Read-Only Camera Node Inventory Handover
 
+> **ACTIVE OWNER POLICY — 2026-10-20:** Root/`su -c` is permitted for future PicoLHSync experiments on the owner-controlled Pico. The rootless-only condition has been withdrawn. The older `NO-GO for rootless metadata join` below documents the restricted experiment only and **is no longer a project-wide blocker**. Use the [consolidated project status and execution policy](P3-20261020-Consolidated-Status-and-Execution-Policy.md) for next-phase priorities. Historical data/results unchanged; live correction gates remain false.
+
+
 ## Current frame metadata join decision — P3-A7 (2026-10-20)
 
 **NO-GO for another rootless hardware metadata-join run.** The existing 1,204-row capture already supplies K0 camera ID, slot `+146` `seq`, slot `+122` timestamp, and reader-clock fields. A new identical scan would not add an independent callback record, source-request ID, or fallback marker.
